@@ -110,21 +110,56 @@ public sealed class Box : Form
         Recolour(); RefreshItems(); LayoutChrome();
     }
 
+    /// <summary>The tile being dragged between/within boxes. Kept in-process; the drag data only carries a marker
+    /// format, so Explorer can never receive (and move) a saved library file.</summary>
+    static (Box From, string Path)? tileDrag;
+    const string TileFormat = "DesktopBoxes.Tile";
+
     void EnableDrop(Control control)
     {
         control.AllowDrop = true;
-        control.DragEnter += (_, e) =>
-        {
-            var valid = !owner.Busy && e.Data?.GetDataPresent(DataFormats.FileDrop) == true && (e.AllowedEffect & DragDropEffects.Copy) != 0;
-            e.Effect = valid ? DragDropEffects.Copy : DragDropEffects.None;
-            draggingOver = valid; ApplyBorder(); Invalidate();
-        };
-        control.DragLeave += (_, _) => { draggingOver = false; ApplyBorder(); Invalidate(); };
+        control.DragEnter += (_, e) => DragUpdate(e);
+        control.DragOver += (_, e) => DragUpdate(e);
+        control.DragLeave += (_, _) => EndDragFeedback();
         control.DragDrop += async (_, e) =>
         {
-            draggingOver = false; ApplyBorder(); Invalidate();
-            if (e.Data?.GetData(DataFormats.FileDrop) is string[] paths) await owner.ImportItemsAsync(this, paths);
+            var index = InsertIndex(new Point(e.X, e.Y)); EndDragFeedback();
+            // Deferred: the source tile is still inside its DoDragDrop loop, and the move rebuilds (disposes) tiles.
+            if (e.Data?.GetDataPresent(TileFormat) == true && tileDrag is { } drag) BeginInvoke(() => owner.MoveItem(drag.From, drag.Path, this, index));
+            else if (e.Data?.GetData(DataFormats.FileDrop) is string[] paths) await owner.ImportItemsAsync(this, paths);
         };
+    }
+    void DragUpdate(DragEventArgs e)
+    {
+        bool tile = e.Data?.GetDataPresent(TileFormat) == true && tileDrag != null;
+        bool files = !tile && e.Data?.GetDataPresent(DataFormats.FileDrop) == true && (e.AllowedEffect & DragDropEffects.Copy) != 0;
+        e.Effect = owner.Busy ? DragDropEffects.None : tile ? DragDropEffects.Move : files ? DragDropEffects.Copy : DragDropEffects.None;
+        if (e.Effect == DragDropEffects.None) { EndDragFeedback(); return; }
+        if (!draggingOver) { draggingOver = true; ApplyBorder(); Invalidate(); }
+        var screen = new Point(e.X, e.Y);
+        items.ShowMarker(InsertIndex(screen));
+        // Auto-scroll when hovering near the top or bottom edge of a box with more items than fit.
+        var local = scroller.PointToClient(screen); int edge = Theme.S(36);
+        if (local.Y < edge) scroller.ScrollTo(scroller.Offset - Theme.S(14));
+        else if (local.Y > scroller.ClientSize.Height - edge) scroller.ScrollTo(scroller.Offset + Theme.S(14));
+    }
+    void EndDragFeedback() { items.ShowMarker(null); if (!draggingOver) return; draggingOver = false; ApplyBorder(); Invalidate(); }
+    /// <summary>Slot a drop at this screen point would take, reading tiles left-to-right, top-to-bottom.</summary>
+    int InsertIndex(Point screen)
+    {
+        var p = items.PointToClient(screen); var tiles = items.Controls.Cast<Control>().ToArray();
+        for (int i = 0; i < tiles.Length; i++)
+            if (p.Y < tiles[i].Top || (p.Y < tiles[i].Bottom && p.X < tiles[i].Left + tiles[i].Width / 2)) return i;
+        return tiles.Length;
+    }
+    /// <summary>Inserts an item already in the library at a slot (used by moves between and within boxes).</summary>
+    internal void InsertItem(string path, int index) { State.Items.Insert(Math.Clamp(index, 0, State.Items.Count), path); RefreshItems(); }
+    internal void RemoveItem(string path) { State.Items.Remove(path); RefreshItems(); }
+    void StartTileDrag(ItemTile tile, string path)
+    {
+        tileDrag = (this, path); tile.Ghost = true; tile.Invalidate();
+        try { tile.DoDragDrop(new DataObject(TileFormat, path), DragDropEffects.Move); }
+        finally { tileDrag = null; if (!tile.IsDisposed) { tile.Ghost = false; tile.Invalidate(); } }
     }
 
     protected override void OnSizeChanged(EventArgs e)
@@ -191,6 +226,16 @@ public sealed class Box : Form
                 catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException) { SetMessage("Couldn't open this item. Check its saved file."); }
             };
             tips.SetToolTip(tile, owner.Library.Contains(path) ? name : name + "\nOriginal unavailable — drop it again to save a copy");
+            Point? press = null;
+            tile.MouseDown += (_, e) => press = e.Button == MouseButtons.Left ? e.Location : null;
+            tile.MouseUp += (_, _) => press = null;
+            tile.MouseMove += (_, e) =>
+            {
+                if (press is not { } start || e.Button != MouseButtons.Left || owner.Busy) return;
+                var drag = SystemInformation.DragSize;
+                if (Math.Abs(e.X - start.X) < drag.Width && Math.Abs(e.Y - start.Y) < drag.Height) return;
+                press = null; tile.Capture = false; StartTileDrag(tile, path);
+            };
             var itemMenu = Menus.Create(accent);
             itemMenu.Items.AddRange([
                 Menus.Spacer(), Menus.Item("Open", Menus.Icons.Open, () => tile.PerformClick()),
@@ -264,10 +309,24 @@ public sealed class Box : Form
 internal sealed class TilePanel : FlowLayoutPanel
 {
     internal Color Accent;
+    int? marker;
     internal TilePanel() { DoubleBuffered = true; }
+    /// <summary>Shows where a dragged tile will land (null hides it).</summary>
+    internal void ShowMarker(int? index) { if (marker == index) return; marker = index; Invalidate(); }
     protected override void OnPaint(PaintEventArgs e)
     {
-        base.OnPaint(e); if (Controls.Count != 0) return;
+        base.OnPaint(e);
+        if (marker is { } index && Controls.Count > 0)
+        {
+            // A rounded accent bar in the gap before the target slot (or after the last tile).
+            var tiles = Controls.Cast<Control>().ToArray(); var before = index < tiles.Length;
+            var t = tiles[before ? index : tiles.Length - 1]; int width = Math.Max(2, Theme.S(3));
+            int x = before ? t.Left - t.Margin.Left - width / 2 : t.Right + t.Margin.Right - width / 2;
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var bar = Theme.Round(new RectangleF(x, t.Top + Theme.S(6), width, t.Height - Theme.S(12)), width / 2f);
+            using var brush = new SolidBrush(Accent); e.Graphics.FillPath(brush, bar);
+        }
+        if (Controls.Count != 0) return;
         // Empty state: a soft dashed drop zone with one quiet line of text.
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         var zone = new RectangleF(Padding.Left + .5f, Theme.S(2) + .5f, ClientSize.Width - Padding.Horizontal - 1, ClientSize.Height - Padding.Bottom - Theme.S(2) - 1);
@@ -337,21 +396,28 @@ internal class SoftButton : Button
 internal sealed class ItemTile : SoftButton
 {
     static readonly int LineHeight = TextRenderer.MeasureText("Ag", Theme.Label, Size.Empty, TextFormatFlags.NoPadding).Height;
+    /// <summary>Drawn faded while this tile is being dragged.</summary>
+    internal bool Ghost;
     internal ItemTile() { Size = new Size(Theme.S(88), Theme.S(18) + Theme.S(32) + Theme.S(8) + LineHeight * 2); Margin = new Padding(Theme.S(2)); }
     protected override void OnPaint(PaintEventArgs e)
     {
         var back = Parent?.BackColor ?? BackColor;
         e.Graphics.Clear(back); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        if (Hover || Focused)
+        if ((Hover || Focused) && !Ghost)
         {
             using var path = Theme.Round(new RectangleF(0, 0, Width - 1, Height - 1), Theme.S(8));
             using var brush = new SolidBrush(Theme.Mix(back, Accent, Hover ? .16f : .1f)); e.Graphics.FillPath(brush, path);
         }
         int icon = Theme.S(32), top = Theme.S(8);
-        if (Image != null) { e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic; e.Graphics.DrawImage(Image, new Rectangle((Width - icon) / 2, top, icon, icon)); }
+        if (Image != null)
+        {
+            e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            using var fade = new System.Drawing.Imaging.ImageAttributes(); fade.SetColorMatrix(new System.Drawing.Imaging.ColorMatrix { Matrix33 = Ghost ? .3f : 1f });
+            e.Graphics.DrawImage(Image, new Rectangle((Width - icon) / 2, top, icon, icon), 0, 0, Image.Width, Image.Height, GraphicsUnit.Pixel, fade);
+        }
         // Two lines at most; TextBoxControl drops a partially visible third line and EndEllipsis marks the cut.
         var text = new Rectangle(Theme.S(4), top + icon + Theme.S(6), Width - Theme.S(8), LineHeight * 2);
-        TextRenderer.DrawText(e.Graphics, Text, Theme.Label, text, Hover ? Theme.Ink : Theme.Mix(back, Theme.Ink, .88f),
+        TextRenderer.DrawText(e.Graphics, Text, Theme.Label, text, Ghost ? Theme.Mix(back, Theme.Ink, .3f) : Hover ? Theme.Ink : Theme.Mix(back, Theme.Ink, .88f),
             TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPadding);
     }
 }

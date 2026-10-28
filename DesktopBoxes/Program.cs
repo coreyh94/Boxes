@@ -52,6 +52,13 @@ public sealed class Boxes : ApplicationContext
                     if (test.Controls.Count < 3) throw new InvalidOperationException("Layout missing");
                     Add();
                     if (Windows.Count != 2 || Windows[0].Bounds.IntersectsWith(Windows[1].Bounds)) throw new InvalidOperationException("New box failed");
+                    // Moving between boxes and reordering within one keeps the same saved file.
+                    var saved = test.State.Items[0]; var other = Windows[1];
+                    MoveItem(test, saved, other, 0);
+                    if (test.State.Items.Count != 0 || other.State.Items.SingleOrDefault() != saved || !File.Exists(saved)) throw new InvalidOperationException("Move between boxes failed");
+                    other.State.Items.AddRange(["b", "c"]); MoveItem(other, saved, other, 3);
+                    if (!other.State.Items.SequenceEqual(["b", "c", saved])) throw new InvalidOperationException("Reorder within a box failed: " + string.Join(",", other.State.Items));
+                    other.State.Items.RemoveAll(i => i is "b" or "c"); MoveItem(other, saved, test, 0);
                     test.State.Items.Clear(); test.RefreshItems(); test.RenderPreview();
                     if (Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR") is { } previews) { SettingsWindow.RenderPreview(this, previews); using var trayMenu = TrayMenu(); Menus.RenderPreview(trayMenu, Path.Combine(previews, "menu-tray.png"), 3); }
                     Console.WriteLine("Smoke test passed");
@@ -161,6 +168,24 @@ public sealed class Boxes : ApplicationContext
         var area = Screen.FromRectangle(proposed).WorkingArea;
         if (!area.Contains(proposed) || Windows.Any(b => b != box && b.Bounds.IntersectsWith(proposed))) { Status("Box placement blocked: keep boxes inside free desktop space"); return false; }
         return ClearIcons(Windows.Select(b => b == box ? proposed : b.Bounds).ToArray());
+    }
+    /// <summary>Moves a saved item between boxes, or to a new slot in the same box. The library file is untouched.</summary>
+    internal void MoveItem(Box from, string path, Box to, int index)
+    {
+        if (Busy || !from.State.Items.Contains(path)) return;
+        if (from == to)
+        {
+            int old = from.State.Items.IndexOf(path); if (index > old) index--;
+            if (index == old) return;
+            from.State.Items.RemoveAt(old); to.InsertItem(path, index);
+        }
+        else
+        {
+            from.RemoveItem(path);
+            // Already in the target box: the move just merges the two.
+            if (!to.State.Items.Contains(path, StringComparer.OrdinalIgnoreCase)) to.InsertItem(path, index);
+        }
+        Save();
     }
     internal void Save() { if (smokeMode) return; File.WriteAllText(file + ".tmp", JsonSerializer.Serialize(Windows.Select(b => b.State), new JsonSerializerOptions { WriteIndented = true })); File.Move(file + ".tmp", file, true); }
     internal void RequestExit() { if (Busy) { exitPending = true; Status("Finishing saving items before exit"); } else ExitThread(); }
