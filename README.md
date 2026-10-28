@@ -4,9 +4,13 @@ A native Windows 11 desktop organiser using .NET 10 Windows Forms. No browser en
 
 ## Download
 
-Get `Boxes-<version>-win-x64.exe` from the [latest release](https://github.com/coreyh94/Boxes/releases/latest). It is a single self-contained file for 64-bit Windows 10/11 with nothing else to install. Move it somewhere permanent (for example `%LOCALAPPDATA%\Programs\Boxes`) before the first run, because Boxes registers that path to start with Windows.
+Download **`Boxes-Setup-<version>.exe`** from the [latest release](https://github.com/coreyh94/Boxes/releases/latest) and run it. It installs Boxes for your account only (no admin prompt), adds it to the Start menu, starts it with Windows, and can be removed from **Settings › Apps › Installed apps**. Uninstalling asks whether to keep your boxes and saved items. Running the setup again upgrades Boxes in place.
 
-The exe is not code-signed, so Windows SmartScreen may show "Windows protected your PC". Choose **More info › Run anyway**.
+For 64-bit Windows 10 and 11. Nothing else is needed; .NET is included.
+
+Prefer no installer? `Boxes-v<version>-win-x64.exe` is the same app as a single portable file. Move it somewhere permanent before the first run, because Boxes starts with Windows from wherever it was first run.
+
+Neither file is code-signed, so Windows SmartScreen may show "Windows protected your PC". Choose **More info › Run anyway**.
 
 When a box would cover desktop icons, Boxes moves the icons into free space. To do that it turns off the desktop's **Auto arrange icons** and **Align icons to grid** settings, which stay off after Boxes exits.
 
@@ -19,11 +23,13 @@ dotnet publish DesktopBoxes -c Release -o dist
 .\dist\DesktopBoxes.exe
 ```
 
-To make a self-contained single-file release like the download:
+To build both release downloads (the installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php): `winget install JRSoftware.InnoSetup`):
 
 ```powershell
-dotnet publish DesktopBoxes -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o release\win-x64
+.\build-release.ps1
 ```
+
+This writes `Boxes-Setup-<version>.exe` and the portable `Boxes-v<version>-win-x64.exe` to `release\`. The version comes from `<Version>` in `DesktopBoxes.csproj`.
 
 ## Controls
 
