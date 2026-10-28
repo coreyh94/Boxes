@@ -27,6 +27,7 @@ Boxes are ordinary borderless windows maintained near the desktop in the Z order
 
 ## Validation
 
-Release compilation and publishing verified on Windows with .NET SDK 10.0.400. No live desktop acceptance testing has yet been completed. Before relying on it, check drop/open/remove, rename/resize/colour persistence after exit, grid alignment on each monitor, icon relocation with and without auto-arrange, tray startup toggle, and Show Desktop/application switching.
+Release compilation, publishing, and a UI construction/launch/close smoke test verified on Windows with .NET SDK 10.0.400. No live desktop acceptance testing has yet been completed. Before relying on it, check drop/open/remove, rename/resize/colour persistence after exit, grid alignment on each monitor, icon relocation with and without auto-arrange, tray startup toggle, and Show Desktop/application switching.
 
 Icon positioning uses Windows list-view messages: https://learn.microsoft.com/en-us/windows/win32/controls/lvm-setitemposition . Auto-arrange prevents manual placement.
+
