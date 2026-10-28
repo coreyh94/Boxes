@@ -14,6 +14,8 @@ public class State
     public int X { get; set; } = 48; public int Y { get; set; } = 48;
     public int Width { get; set; } = 384; public int Height { get; set; } = 288;
     public int Colour { get; set; } = SwatchRow.Palette[0].Colour.ToArgb();
+    /// <summary>Window opacity in percent (30–100); null follows the default in Settings.</summary>
+    public int? Opacity { get; set; }
     public List<string> Items { get; set; } = [];
     /// <summary>Saved copy of the photo for a photo box; null for an ordinary item box.</summary>
     public string? Photo { get; set; }
@@ -60,6 +62,15 @@ public sealed class Boxes : ApplicationContext
                     if (test.State.Items.Count != 1 || !File.ReadAllText(test.State.Items[0]).Contains("URL=https://example.com/"))
                         throw new InvalidOperationException("Imported tile did not survive desktop deletion");
                     if (test.Controls.Count < 3) throw new InvalidOperationException("Layout missing");
+                    test.State.Opacity = 60; test.ApplyOpacity();
+                    if (Math.Abs(test.Opacity - .6) > .01) throw new InvalidOperationException("Box opacity not applied");
+                    if (Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR") is { } shots)
+                    {
+                        test.Activate(); await Task.Delay(400);
+                        using var shot = new Bitmap(test.Width, test.Height); using (var g = Graphics.FromImage(shot)) g.CopyFromScreen(test.Location, Point.Empty, test.Size);
+                        shot.Save(Path.Combine(shots, "box-opacity.png"));
+                    }
+                    test.State.Opacity = null; test.ApplyOpacity();
                     Add();
                     if (Windows.Count != 2 || Windows[0].Bounds.IntersectsWith(Windows[1].Bounds)) throw new InvalidOperationException("New box failed");
                     // Moving between boxes and reordering within one keeps the same saved file.

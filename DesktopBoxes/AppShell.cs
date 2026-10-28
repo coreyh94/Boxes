@@ -11,6 +11,8 @@ public sealed class AppSettings
 {
     public bool StartWithWindows { get; set; } = true;
     public bool CheckForUpdates { get; set; } = true;
+    /// <summary>Opacity in percent for boxes that haven't been given their own.</summary>
+    public int BoxOpacity { get; set; } = 100;
     /// <summary>Executable path whose tray icon has already been pinned once; later user choices are left alone.</summary>
     public string? TrayPinnedFor { get; set; }
     static string File => Path.Combine(Boxes.folder, "settings.json");
@@ -114,7 +116,7 @@ internal sealed class SettingsWindow : Form
     SettingsWindow(Boxes app)
     {
         Text = "Boxes settings"; Icon = AppIcon.Create(new Size(Theme.S(32), Theme.S(32))); FormBorderStyle = FormBorderStyle.FixedSingle; MaximizeBox = MinimizeBox = false;
-        StartPosition = FormStartPosition.CenterScreen; AutoScaleMode = AutoScaleMode.None; ClientSize = new Size(Theme.S(420), Theme.S(296));
+        StartPosition = FormStartPosition.CenterScreen; AutoScaleMode = AutoScaleMode.None; ClientSize = new Size(Theme.S(420), Theme.S(372));
         BackColor = Color.FromArgb(21, 25, 34); ForeColor = Theme.Ink; Font = Theme.Body; TopMost = true;
         var heading = new Label { Text = "Settings", Font = Theme.Title, ForeColor = Theme.Ink, Location = new Point(Theme.S(22), Theme.S(18)), AutoSize = true };
         var startup = Option("Start Boxes with Windows", "Opens quietly in the tray when you sign in.", Theme.S(62), Startup.Enabled);
@@ -124,6 +126,11 @@ internal sealed class SettingsWindow : Form
         pin.Enabled = pinned != null; pin.CheckedChanged += (_, _) => TrayPin.Set(pin.Checked);
         var updates = Option("Check for updates", "Asks GitHub for the latest version once a day.", Theme.S(182), app.Settings.CheckForUpdates);
         updates.CheckedChanged += (_, _) => { app.Settings.CheckForUpdates = updates.Checked; app.Settings.Save(); if (updates.Checked) _ = app.CheckForUpdateAsync(); };
+        var opacity = new SliderControl { Label = "Default box opacity", Value = app.Settings.BoxOpacity, Location = new Point(Theme.S(8), Theme.S(236)), Width = ClientSize.Width - Theme.S(16), Accent = Color.FromArgb(255, Color.FromArgb(0x739FF4)) };
+        opacity.Changed += value => { app.Settings.BoxOpacity = value; foreach (var box in app.Windows) box.ApplyOpacity(); };
+        opacity.Committed += _ => app.Settings.Save();
+        var opacityNote = new Label { Text = "For new boxes and any box whose own slider you haven't moved.", AutoSize = true, Location = new Point(Theme.S(24), Theme.S(292)), Font = Theme.Small, ForeColor = Theme.Muted };
+        Controls.AddRange([opacity, opacityNote]);
         var done = new SoftButton { Text = "Done", Size = new Size(Theme.S(92), Theme.S(32)), Location = new Point(ClientSize.Width - Theme.S(114), ClientSize.Height - Theme.S(50)), Accent = Color.FromArgb(255, Color.FromArgb(0x739FF4)) };
         done.Click += (_, _) => Close(); AcceptButton = CancelButton = done;
         Controls.AddRange([heading, done]);

@@ -174,3 +174,71 @@ internal sealed class MenuHeader : ToolStripItem
     }
     protected override void Dispose(bool disposing) { if (disposing) mark.Dispose(); base.Dispose(disposing); }
 }
+
+/// <summary>Shared look of the opacity sliders (box menu row and Settings): label and value on top, rounded track below.</summary>
+internal static class Slider
+{
+    internal const int Min = 30, Max = 100, Step = 5;
+    static readonly int Pad = S(16), TrackTop = S(30), TrackHeight = S(18);
+    internal static int Height => S(56);
+    static Rectangle Track(Rectangle bounds) => new(bounds.Left + Pad + S(4), bounds.Top + TrackTop, bounds.Width - Pad * 2 - S(8), TrackHeight);
+    internal static int ValueAt(Rectangle bounds, int x)
+    {
+        var track = Track(bounds); float t = Math.Clamp((x - track.Left) / (float)track.Width, 0, 1);
+        return Math.Clamp((int)Math.Round((Min + t * (Max - Min)) / Step) * Step, Min, Max);
+    }
+    internal static void Paint(Graphics g, Rectangle bounds, string label, int value, Color accent, Color back, bool hover)
+    {
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        TextRenderer.DrawText(g, label, Small, new Point(bounds.Left + Pad, bounds.Top + S(8)), Muted);
+        TextRenderer.DrawText(g, value + "%", Small, new Rectangle(bounds.Left, bounds.Top + S(8), bounds.Width - Pad, S(16)), Ink, TextFormatFlags.Right);
+        var track = Track(bounds); float h = S(4), y = track.Top + track.Height / 2f;
+        float at = track.Left + track.Width * (value - Min) / (float)(Max - Min), d = S(hover ? 16 : 14);
+        using (var rail = Round(new RectangleF(track.Left, y - h / 2, track.Width, h), h / 2)) using (var brush = new SolidBrush(Mix(back, Ink, .16f))) g.FillPath(brush, rail);
+        if (at - track.Left >= h) using (var fill = Round(new RectangleF(track.Left, y - h / 2, at - track.Left, h), h / 2)) using (var brush = new SolidBrush(accent)) g.FillPath(brush, fill);
+        using (var thumb = new SolidBrush(Ink)) g.FillEllipse(thumb, at - d / 2, y - d / 2, d, d);
+        using (var ring = new Pen(accent, S(2))) g.DrawEllipse(ring, at - d / 2, y - d / 2, d, d);
+    }
+}
+
+/// <summary>Opacity slider row in a box's menu. Changed fires while dragging; Committed once on release.</summary>
+internal sealed class OpacityRow : ToolStripItem
+{
+    internal int Value = Slider.Max; internal Color Accent = Color.FromArgb(0x73, 0x9F, 0xF4);
+    internal event Action<int>? Changed, Committed;
+    bool dragging, hover;
+    internal OpacityRow() { AutoSize = false; Size = GetPreferredSize(Size.Empty); Margin = Menus.CustomRowMargin; }
+    public override Size GetPreferredSize(Size constrainingSize) => new(new SwatchRow().GetPreferredSize(Size.Empty).Width, Slider.Height);
+    void Set(int x) { var v = Slider.ValueAt(new Rectangle(Point.Empty, Size), x); if (v != Value) { Value = v; Changed?.Invoke(v); Invalidate(); } }
+    protected override void OnMouseDown(MouseEventArgs e) { if (e.Button == MouseButtons.Left) { dragging = true; Set(e.X); } base.OnMouseDown(e); }
+    protected override void OnMouseMove(MouseEventArgs e) { if (dragging) Set(e.X); if (!hover) { hover = true; Invalidate(); } base.OnMouseMove(e); }
+    protected override void OnMouseUp(MouseEventArgs e) { if (dragging) { dragging = false; Committed?.Invoke(Value); } base.OnMouseUp(e); }
+    protected override void OnMouseLeave(EventArgs e) { if (dragging) { dragging = false; Committed?.Invoke(Value); } hover = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnPaint(PaintEventArgs e) => Slider.Paint(e.Graphics, new Rectangle(Point.Empty, Size), "Opacity", Value, Accent, Menus.Back, hover);
+}
+
+/// <summary>The same slider as a standalone control, for the Settings window. Arrow keys step by 5%.</summary>
+internal sealed class SliderControl : Control
+{
+    internal string Label = ""; internal Color Accent = Color.FromArgb(0x73, 0x9F, 0xF4);
+    int current = Slider.Max; bool dragging, hover;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal int Value { get => current; set { value = Math.Clamp(value, Slider.Min, Slider.Max); if (current != value) { current = value; Changed?.Invoke(value); Invalidate(); } } }
+    internal event Action<int>? Changed, Committed;
+    internal SliderControl() { SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.Selectable, true); Height = Slider.Height; Cursor = Cursors.Hand; TabStop = true; }
+    void Set(int x) => Value = Slider.ValueAt(ClientRectangle, x);
+    protected override void OnMouseDown(MouseEventArgs e) { if (e.Button == MouseButtons.Left) { Focus(); dragging = true; Capture = true; Set(e.X); } base.OnMouseDown(e); }
+    protected override void OnMouseMove(MouseEventArgs e) { if (dragging) Set(e.X); base.OnMouseMove(e); }
+    protected override void OnMouseUp(MouseEventArgs e) { if (dragging) { dragging = false; Capture = false; Committed?.Invoke(Value); } base.OnMouseUp(e); }
+    protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override bool IsInputKey(Keys keyData) => keyData is Keys.Left or Keys.Right || base.IsInputKey(keyData);
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.KeyCode is Keys.Left or Keys.Right) { Value += e.KeyCode == Keys.Right ? Slider.Step : -Slider.Step; Committed?.Invoke(Value); e.Handled = true; }
+        base.OnKeyDown(e);
+    }
+    protected override void OnPaint(PaintEventArgs e) { e.Graphics.Clear(Parent?.BackColor ?? BackColor); Slider.Paint(e.Graphics, ClientRectangle, Label, Value, Accent, Parent?.BackColor ?? BackColor, hover || Focused); }
+    protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+    protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+}

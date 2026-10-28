@@ -58,6 +58,7 @@ public sealed class Box : Form
     readonly Label status = new() { AutoSize = false, AutoEllipsis = true, Font = Theme.Small, ForeColor = Theme.Muted, TextAlign = ContentAlignment.MiddleLeft, Visible = false };
     readonly ContextMenuStrip menu = Menus.Create(Color.SteelBlue);
     readonly SwatchRow swatches = new();
+    readonly OpacityRow opacity = new();
     readonly ToolTip tips = new() { InitialDelay = 400, AutoPopDelay = 6000 };
     Color accent;
     Point drag;
@@ -86,6 +87,8 @@ public sealed class Box : Form
         tips.SetToolTip(options, "Colours and box options");
         tips.SetToolTip(header, "Drag to move · boxes snap to the grid");
         swatches.Picked += colour => { State.Colour = colour.ToArgb(); Recolour(); owner.Save(); };
+        opacity.Changed += value => { State.Opacity = value; ApplyOpacity(); };
+        opacity.Committed += _ => owner.Save();
         var changePhoto = Menus.Item("Change photo…", Menus.Icons.Photo, () => _ = owner.ChangePhotoAsync(this));
         var nextPhoto = Menus.Item("Next photo", Menus.Icons.Next, () => _ = reel?.NextAsync());
         var changeFolder = Menus.Item("Change folder…", Menus.Icons.Folder, () => owner.ChangeFolder(this));
@@ -94,14 +97,14 @@ public sealed class Box : Form
         var rename = Menus.Item("Rename", Menus.Icons.Rename, () => { title.Focus(); title.SelectAll(); });
         menu.Opening += (_, _) =>
         {
-            swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour));
+            swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour)); opacity.Value = State.Opacity ?? owner.Settings.BoxOpacity;
             changePhoto.Visible = State.Photo != null; nextPhoto.Visible = changeFolder.Visible = interval.Visible = State.PhotoFolder != null;
             Menus.Tick(interval, Array.FindIndex(Intervals, i => i.Seconds == State.SlideSeconds));
             titleBar.Text = State.HideTitle ? "Show title bar" : "Hide title bar"; rename.Visible = !State.HideTitle;
             titleBar.Image?.Dispose(); titleBar.Image = Menus.Glyph(State.HideTitle ? Menus.Icons.Show : Menus.Icons.Hide, Theme.Muted);
         };
         menu.Items.AddRange([
-            Menus.Spacer(), swatches, Menus.Separator(),
+            Menus.Spacer(), swatches, opacity, Menus.Separator(),
             changePhoto, nextPhoto, changeFolder, interval, titleBar,
             Menus.Item("New box", Menus.Icons.Add, () => owner.Add()),
             Menus.Item("New photo box…", Menus.Icons.Photo, () => _ = owner.AddPhotoBoxAsync()),
@@ -135,7 +138,7 @@ public sealed class Box : Form
         // Clicking empty space in the box, or anywhere outside it, clears the selection.
         items.MouseDown += (_, _) => { if (SelectedTile != null) Select(null); };
         Deactivate += (_, _) => { if (SelectedTile != null) Select(null); };
-        Recolour(); RefreshItems(); ShowPhoto(); LayoutChrome();
+        Recolour(); ApplyOpacity(); RefreshItems(); ShowPhoto(); LayoutChrome();
     }
 
     void EnableMove(Control c, Func<bool> active, bool immediate)
@@ -286,6 +289,8 @@ public sealed class Box : Form
         using var path = Theme.Round(new RectangleF(1, 1, Width - 3, Height - 3), Theme.S(8));
         using var pen = new Pen(accent, Theme.S(2)); e.Graphics.DrawPath(pen, path);
     }
+    /// <summary>Fades the whole box, contents included; Windows can't make only a WinForms background see-through.</summary>
+    internal void ApplyOpacity() => Opacity = Math.Clamp(State.Opacity ?? owner.Settings.BoxOpacity, Slider.Min, Slider.Max) / 100.0;
     void Recolour()
     {
         // Before 1.2.0 new boxes defaulted to SteelBlue, which isn't in the palette; give them Ocean so the swatch menu shows a choice.
@@ -293,7 +298,7 @@ public sealed class Box : Form
         accent = Theme.Mix(Color.FromArgb(State.Colour), Color.White, .15f);
         BackColor = Theme.Tint(Color.FromArgb(State.Colour));
         header.BackColor = title.BackColor = scroller.BackColor = items.BackColor = status.BackColor = grip.BackColor = options.BackColor = photo.BackColor = BackColor; photo.Accent = accent; photo.Invalidate();
-        items.Accent = options.Accent = grip.Accent = scroller.Accent = accent;
+        items.Accent = options.Accent = grip.Accent = scroller.Accent = opacity.Accent = accent;
         foreach (var tile in items.Controls.OfType<ItemTile>()) { tile.Accent = accent; if (tile.ContextMenuStrip != null) Menus.SetAccent(tile.ContextMenuStrip, accent); }
         Menus.SetAccent(menu, accent); Menus.SetAccent((ContextMenuStrip)interval.DropDown, accent); ApplyBorder();
         Invalidate(true);
