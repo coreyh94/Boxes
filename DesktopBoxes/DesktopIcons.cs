@@ -117,6 +117,30 @@ internal static class Placement
         }
         return result;
     }
+    /// <summary>
+    /// Where each box should sit on the current monitors. A box whose saved (home) spot still fits stays there, so it
+    /// returns home when a monitor or resolution comes back. Others borrow free space on the nearest monitor, shrunk to
+    /// fit if needed, without changing their saved spot. Null means no room anywhere (the box is hidden).
+    /// </summary>
+    internal static Rectangle?[] Fit(Rectangle[] homes, Rectangle[] screens)
+    {
+        var result = new Rectangle?[homes.Length]; var placed = new List<Rectangle>();
+        for (int i = 0; i < homes.Length; i++)
+            if (screens.Any(s => s.Contains(homes[i])) && !placed.Any(homes[i].IntersectsWith)) { result[i] = homes[i]; placed.Add(homes[i]); }
+        for (int i = 0; i < homes.Length; i++)
+        {
+            if (result[i] != null) continue;
+            var centre = new Point(homes[i].Left + homes[i].Width / 2, homes[i].Top + homes[i].Height / 2);
+            foreach (var area in screens.OrderBy(s => Distance(s, centre)))
+            {
+                var size = new Size(Math.Max(240, Math.Min(homes[i].Width, area.Width / 48 * 48)), Math.Max(192, Math.Min(homes[i].Height, area.Height / 48 * 48)));
+                if (FindBox(size, [.. placed], [area]) is not { } slot) continue;
+                result[i] = slot; placed.Add(slot); break;
+            }
+        }
+        return result;
+    }
+    static double Distance(Rectangle r, Point p) { int dx = Math.Max(Math.Max(r.Left - p.X, 0), p.X - r.Right), dy = Math.Max(Math.Max(r.Top - p.Y, 0), p.Y - r.Bottom); return Math.Sqrt(dx * dx + dy * dy); }
     internal static Rectangle? FindBox(Size size, Rectangle[] boxes, Rectangle[] screens, Point? inset = null)
     {
         foreach (var area in screens)

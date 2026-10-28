@@ -25,6 +25,9 @@ public sealed class Boxes : ApplicationContext
     bool ready; string lastStatus = ""; internal bool Busy; bool exitPending; readonly bool smokeMode;
     internal readonly ItemLibrary Library;
     internal AppSettings Settings = new(); int pinAttempts;
+    // Windows sends several display notifications while monitors come and go; act once things settle.
+    readonly System.Windows.Forms.Timer displaysSettled = new() { Interval = 1500 };
+    bool userHidden;
     readonly string file = Path.Combine(folder, "layout.json");
     public Boxes(bool smoke = false)
     {
@@ -66,9 +69,26 @@ public sealed class Boxes : ApplicationContext
         tray.DoubleClick += (_, _) => Add();
         if (File.Exists(file)) try { foreach (var s in JsonSerializer.Deserialize<List<State>>(File.ReadAllText(file)) ?? []) Add(s); } catch (JsonException) { File.Copy(file, file + ".invalid-" + DateTime.Now.Ticks); }
         if (Windows.Count == 0) Add();
-        ready = true; Save(); ProtectIcons();
+        FitToScreens(); ready = true; Save(); ProtectIcons();
+        displaysSettled.Tick += (_, _) => { displaysSettled.Stop(); FitToScreens(); ProtectIcons(); };
+        SystemEvents.DisplaySettingsChanged += DisplaysChanged;
         if (Windows.Count > 0) Windows[0].BeginInvoke(async () => await MigrateItemsAsync());
         timer.Tick += (_, _) => { Native.KeepOnDesktop(Windows); ProtectIcons(); PinTrayOnce(); }; timer.Start();
+    }
+    void DisplaysChanged(object? sender, EventArgs e) { displaysSettled.Stop(); displaysSettled.Start(); }
+    /// <summary>Places every box for the current monitors (see Placement.Fit). Saved positions are never changed here.</summary>
+    internal void FitToScreens()
+    {
+        if (Windows.Any(b => b.Moving)) return;
+        var fit = Placement.Fit([.. Windows.Select(b => b.Home)], [.. Screen.AllScreens.Select(s => s.WorkingArea)]);
+        for (int i = 0; i < Windows.Count; i++)
+        {
+            var box = Windows[i];
+            if (fit[i] is not { } spot) { box.Hide(); continue; }
+            if (box.Bounds != spot) box.Bounds = spot;
+            if (!userHidden && !box.Visible) box.Show();
+        }
+        var hidden = fit.Count(r => r == null); if (hidden > 0) Status($"{hidden} box{(hidden == 1 ? "" : "es")} hidden: not enough screen space");
     }
     /// <summary>Explorer registers the tray icon shortly after it first appears; pin it beside the clock once per executable, then respect the user's choice.</summary>
     void PinTrayOnce()
@@ -81,8 +101,9 @@ public sealed class Boxes : ApplicationContext
         var menu = Menus.Create(Color.FromArgb(255, Color.FromArgb(0x739FF4)));
         var toggle = Menus.Item("Hide boxes", Menus.Icons.Hide, () =>
         {
-            if (Windows.Any(b => b.Visible)) foreach (var b in Windows) b.Hide();
-            else { foreach (var b in Windows) b.Show(); ProtectIcons(); }
+            userHidden = Windows.Any(b => b.Visible);
+            if (userHidden) foreach (var b in Windows) b.Hide();
+            else { FitToScreens(); ProtectIcons(); }
         });
         menu.Opening += (_, _) =>
         {
@@ -172,5 +193,5 @@ public sealed class Boxes : ApplicationContext
         }
         finally { Busy = false; if (exitPending) ExitThread(); }
     }
-    protected override void ExitThreadCore() { if (Windows.Count > 0) Save(); timer.Dispose(); tray.Dispose(); foreach (var b in Windows.ToArray()) b.Dispose(); base.ExitThreadCore(); }
+    protected override void ExitThreadCore() { SystemEvents.DisplaySettingsChanged -= DisplaysChanged; displaysSettled.Dispose(); if (Windows.Count > 0) Save(); timer.Dispose(); tray.Dispose(); foreach (var b in Windows.ToArray()) b.Dispose(); base.ExitThreadCore(); }
 }

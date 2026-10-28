@@ -38,6 +38,10 @@ Uses Explorer's supported IFolderView2 / SelectAndPositionItems API. Icons move 
 
 Box moves/resizes that overlap another box or leave the monitor work area are rejected. If there is insufficient room for icons, new placements are rejected. If an existing layout becomes unsafe or Explorer is unavailable, boxes hide. Free space and use **Show boxes** in the tray to retry. The tray tooltip and `%LOCALAPPDATA%\DesktopBoxes\status.log` show the reason.
 
+## Monitors and resolution changes
+
+Each box remembers a saved spot, which only changes when you move or resize it. Layout changes are saved immediately. When monitors are added or removed, or a resolution or scale changes, Boxes waits for Windows to settle (about 1.5 s) and re-fits. Boxes whose saved spot is still on screen stay there. The rest borrow free grid space on the nearest monitor, shrunk if necessary, without overwriting their saved spot. When the monitor or resolution comes back, they return home. If there is no room at all, the box is hidden until there is. Moving a relocated box makes its new position its saved spot.
+
 Microsoft explains why old ListView messages are unsuitable here: https://devblogs.microsoft.com/oldnewthing/20211122-00/?p=105948 .
 
 ## Validation and remaining limitations
@@ -46,4 +50,4 @@ Verified: clean Release build/publish; UI smoke test invoking the actual New box
 
 Developer checks: `--smoke-test` (imports an item through the app, deletes its original, verifies retention, exercises New box, and renders normal/compact controls), `--library-tests` (file/folder/URL/Windows shortcut deletion, shortcut metadata, reload, same-name collisions, self-import and failed-copy cleanup), `--placement-tests`, `--desktop-check` (writes a snapshot beside the executable), and `--verify-layout` (checks current Explorer positions against saved boxes).
 
-Normal and compact UI layouts were rendered from the actual controls and visually inspected. Windows tool windows were not exposed by the UI inspection inventory for live screenshots. Mixed-DPI changes, Explorer restarts, and Show Desktop need broader hands-on testing. Boxes use ordinary borderless windows maintained near the desktop in the Z order, rather than an Explorer extension. Shell virtual items such as Recycle Bin cannot be dropped as file shortcuts. Items cannot yet be manually reordered or transferred between boxes. Startup remains opt-in through the tray menu.
+Normal and compact UI layouts were rendered from the actual controls and visually inspected. Windows tool windows were not exposed by the UI inspection inventory for live screenshots. Mixed-DPI changes, Explorer restarts, and Show Desktop need broader hands-on testing. Boxes use ordinary borderless windows maintained near the desktop in the Z order, rather than an Explorer extension. Shell virtual items such as Recycle Bin cannot be dropped as file shortcuts. Items cannot yet be manually reordered or transferred between boxes.

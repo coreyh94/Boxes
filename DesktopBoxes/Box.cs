@@ -26,6 +26,8 @@ public sealed class Box : Form
     internal readonly State State;
     readonly Boxes owner;
     internal bool Moving;
+    /// <summary>The saved spot. Only a deliberate move/resize changes it; monitor changes just borrow space elsewhere.</summary>
+    internal Rectangle Home => new(State.X, State.Y, State.Width, State.Height);
     readonly TilePanel items = new() { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(10, 4, 10, 4) };
     readonly Panel header = new() { Dock = DockStyle.Top, Height = 64, Cursor = Cursors.SizeAll };
     readonly TextBox title = new() { BorderStyle = BorderStyle.None, ForeColor = Theme.Ink, Font = Theme.Title };
@@ -51,9 +53,7 @@ public sealed class Box : Form
         AutoScaleMode = AutoScaleMode.None; FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual; MinimumSize = new Size(240, 192);
         DoubleBuffered = true; Padding = new Padding(1); Font = Theme.Body;
-        Bounds = new Rectangle(state.X, state.Y, state.Width, state.Height);
-        if (!Screen.AllScreens.Any(s => s.WorkingArea.Contains(Bounds)))
-            Location = Screen.FromRectangle(Bounds).WorkingArea.Location + new Size(48, 48);
+        Bounds = Home; // Boxes.FitToScreens relocates it if this spot is off the current monitors.
         Controls.Add(items); Controls.Add(footer); Controls.Add(header);
         header.Controls.AddRange([title, count, add, options]); footer.Controls.Add(status);
         title.Text = state.Name; title.AccessibleName = "Box title";
