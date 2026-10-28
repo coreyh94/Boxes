@@ -278,7 +278,7 @@ public sealed class Box : Form
     void Recolour()
     {
         accent = Theme.Mix(Color.FromArgb(State.Colour), Color.White, .15f);
-        BackColor = Theme.Mix(Theme.Card, accent, .07f);
+        BackColor = Theme.Mix(Theme.Card, accent, .24f);
         header.BackColor = title.BackColor = scroller.BackColor = items.BackColor = status.BackColor = grip.BackColor = options.BackColor = photo.BackColor = BackColor; photo.Accent = accent; photo.Invalidate();
         items.Accent = options.Accent = grip.Accent = scroller.Accent = accent;
         foreach (var tile in items.Controls.OfType<ItemTile>()) { tile.Accent = accent; if (tile.ContextMenuStrip != null) Menus.SetAccent(tile.ContextMenuStrip, accent); }

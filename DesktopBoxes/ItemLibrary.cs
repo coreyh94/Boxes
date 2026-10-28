@@ -54,8 +54,8 @@ internal sealed class ItemLibrary(string root)
     static void Copy(string source, string destination)
     {
         var attributes = File.GetAttributes(source);
-        if ((attributes & FileAttributes.ReparsePoint) != 0)
-            throw new IOException("This item is a link or cloud placeholder. Use a regular local copy instead.");
+        if ((attributes & FileAttributes.ReparsePoint) != 0 && Unsupported(attributes, Native.ReparseTag(source)) is { } problem)
+            throw new IOException(problem);
         if ((attributes & FileAttributes.Directory) == 0)
         {
             File.Copy(source, destination);
@@ -64,5 +64,23 @@ internal sealed class ItemLibrary(string root)
         Directory.CreateDirectory(destination);
         foreach (var entry in Directory.EnumerateFileSystemEntries(source))
             Copy(entry, Path.Combine(destination, Path.GetFileName(entry)));
+    }
+
+    const uint CloudTag = 0x9000001A, CloudTagMask = 0xFFFF0FFF;
+    const FileAttributes RecallOnOpen = (FileAttributes)0x40000, RecallOnDataAccess = (FileAttributes)0x400000;
+
+    /// <summary>
+    /// Why a reparse point can't be copied, or null if it can. OneDrive (and other cloud-files providers) mark every
+    /// synced item as a reparse point, so those are fine once downloaded; junctions, symlinks and online-only
+    /// placeholders are not.
+    /// </summary>
+    internal static string? Unsupported(FileAttributes attributes, uint tag)
+    {
+        if ((tag & CloudTagMask) != CloudTag)
+            return "This item is a junction or symbolic link. Drop the original file or folder instead.";
+        var offline = FileAttributes.Offline | ((attributes & FileAttributes.Directory) == 0 ? RecallOnOpen | RecallOnDataAccess : 0);
+        if ((attributes & offline) != 0)
+            return "This item is only stored online. Right-click it, choose \"Always keep on this device\", then try again.";
+        return null;
     }
 }

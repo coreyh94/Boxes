@@ -48,6 +48,16 @@ internal static class LibraryTests
                 Require(failed, "Locked file silently accepted");
             }
             Require(!Directory.EnumerateDirectories(library.Root, ".import-*").Any(), "Partial import was published or leaked");
+            var file = FileAttributes.ReparsePoint | FileAttributes.Archive; var dir = FileAttributes.ReparsePoint | FileAttributes.Directory;
+            Require(ItemLibrary.Unsupported(file, 0x9000001A) == null && ItemLibrary.Unsupported(file, 0x9000601A) == null, "Downloaded OneDrive file rejected");
+            Require(ItemLibrary.Unsupported(dir | (FileAttributes)0x40000, 0x9000601A) == null, "OneDrive folder rejected");
+            Require(ItemLibrary.Unsupported(file | (FileAttributes)0x400000, 0x9000601A) != null && ItemLibrary.Unsupported(file | FileAttributes.Offline, 0x9000001A) != null, "Online-only placeholder accepted");
+            Require(ItemLibrary.Unsupported(dir, 0xA0000003) != null && ItemLibrary.Unsupported(file, 0xA000000C) != null, "Junction or symlink accepted");
+            var junction = Path.Combine(desktop, "Junction");
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /J \"{junction}\" \"{other}\"") { CreateNoWindow = true, UseShellExecute = false })!.WaitForExit();
+            Require(Native.ReparseTag(junction) == 0xA0000003, "Junction reparse tag not read");
+            failed = false; try { library.Import(junction); } catch (IOException) { failed = true; }
+            Require(failed, "Junction followed"); Directory.Delete(junction);
         }
         finally
         {
