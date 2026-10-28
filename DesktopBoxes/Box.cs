@@ -34,7 +34,8 @@ public sealed class Box : Form
     internal bool Moving;
     /// <summary>The saved spot. Only a deliberate move/resize changes it; monitor changes just borrow space elsewhere.</summary>
     internal Rectangle Home => new(State.X, State.Y, State.Width, State.Height);
-    readonly TilePanel items = new() { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(Theme.S(8), 0, Theme.S(8), Theme.S(10)) };
+    readonly TilePanel items = new() { Padding = new Padding(Theme.S(8), 0, Theme.S(8), Theme.S(10)) };
+    readonly ScrollHost scroller;
     readonly Panel header = new() { Dock = DockStyle.Top, Height = Theme.S(48), Cursor = Cursors.SizeAll };
     readonly TextBox title = new() { BorderStyle = BorderStyle.None, ForeColor = Theme.Ink, Font = Theme.Title };
     readonly GhostButton options = new() { Glyph = '', AccessibleName = "Box options" };
@@ -60,7 +61,8 @@ public sealed class Box : Form
         StartPosition = FormStartPosition.Manual; MinimumSize = new Size(240, 192);
         DoubleBuffered = true; Font = Theme.Body;
         Bounds = Home; // Boxes.FitToScreens relocates it if this spot is off the current monitors.
-        Controls.Add(items); Controls.Add(header); Controls.Add(grip); Controls.Add(status);
+        scroller = new ScrollHost(items) { Dock = DockStyle.Fill };
+        Controls.Add(scroller); Controls.Add(header); Controls.Add(grip); Controls.Add(status);
         grip.BringToFront(); status.BringToFront();
         header.Controls.AddRange([title, options]);
         title.Text = state.Name; title.AccessibleName = "Box title";
@@ -83,7 +85,7 @@ public sealed class Box : Form
                 if (owner.Busy) { SetMessage("Let your items finish saving first"); return; }
                 owner.Windows.Remove(this); owner.Save(); Close();
             }, danger: true), Menus.Spacer()]);
-        foreach (var c in new Control[] { this, header, items, grip }) c.ContextMenuStrip = menu;
+        foreach (var c in new Control[] { this, header, scroller, items, grip }) c.ContextMenuStrip = menu;
         foreach (var c in new Control[] { header })
         {
             c.MouseDown += (_, e) =>
@@ -104,7 +106,7 @@ public sealed class Box : Form
             if (e.Button != MouseButtons.Left) return;
             Moving = true; Native.ReleaseCapture(); Native.SendMessage(Handle, 0xA1, 17, 0); Snap(); Moving = false;
         };
-        foreach (var c in new Control[] { this, items, header }) EnableDrop(c);
+        foreach (var c in new Control[] { this, scroller, items, header }) EnableDrop(c);
         Recolour(); RefreshItems(); LayoutChrome();
     }
 
@@ -158,8 +160,8 @@ public sealed class Box : Form
     {
         accent = Theme.Mix(Color.FromArgb(State.Colour), Color.White, .15f);
         BackColor = Theme.Mix(Theme.Card, accent, .07f);
-        header.BackColor = title.BackColor = items.BackColor = status.BackColor = grip.BackColor = options.BackColor = BackColor;
-        items.Accent = options.Accent = grip.Accent = accent;
+        header.BackColor = title.BackColor = scroller.BackColor = items.BackColor = status.BackColor = grip.BackColor = options.BackColor = BackColor;
+        items.Accent = options.Accent = grip.Accent = scroller.Accent = accent;
         foreach (var tile in items.Controls.OfType<ItemTile>()) { tile.Accent = accent; if (tile.ContextMenuStrip != null) Menus.SetAccent(tile.ContextMenuStrip, accent); }
         Menus.SetAccent(menu, accent); ApplyBorder();
         Invalidate(true);
@@ -199,7 +201,7 @@ public sealed class Box : Form
             tile.Disposed += (_, _) => { tile.Image?.Dispose(); itemMenu.Dispose(); };
             EnableDrop(tile); items.Controls.Add(tile);
         }
-        items.ResumeLayout(); items.Invalidate(); UpdateStatus();
+        items.ResumeLayout(); scroller.Relayout(); items.Invalidate(); UpdateStatus();
     }
     internal void RenderPreview()
     {
@@ -211,7 +213,15 @@ public sealed class Box : Form
             var tile = new ItemTile { Text = sample.Item1, Accent = accent, Image = ShellImage.Load(sample.Item2) };
             tile.Disposed += (_, _) => tile.Image?.Dispose(); items.Controls.Add(tile);
         }
-       PerformLayout(); LayoutChrome();
+        foreach (var name in new[] { "Notes", "Paint", "Calculator", "Settings", "Photos", "Clock" })
+        {
+            var tile = new ItemTile { Text = name, Accent = accent, Image = ShellImage.Load(Path.Combine(windows, "System32", "control.exe")) };
+            tile.Disposed += (_, _) => tile.Image?.Dispose(); items.Controls.Add(tile);
+        }
+        PerformLayout(); LayoutChrome(); scroller.Relayout();
+        if (scroller.Max <= 0) throw new InvalidOperationException("Overflowing box did not become scrollable");
+        scroller.ScrollTo(int.MaxValue); if (scroller.Offset != scroller.Max || items.Top != -scroller.Max) throw new InvalidOperationException("Scrolling did not move the items");
+        scroller.ScrollTo(0);
         var output = Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR");
         if (output != null)
         {
@@ -240,9 +250,6 @@ internal sealed class TilePanel : FlowLayoutPanel
 {
     internal Color Accent;
     internal TilePanel() { DoubleBuffered = true; }
-    [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)] static extern int SetWindowTheme(nint hwnd, string app, string? idList);
-    // Windows 10 1809+ / 11: thin dark scrollbar that expands on hover, instead of the light classic one.
-    protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); SetWindowTheme(Handle, "DarkMode_Explorer", null); }
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e); if (Controls.Count != 0) return;

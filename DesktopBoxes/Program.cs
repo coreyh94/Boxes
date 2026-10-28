@@ -51,6 +51,12 @@ public sealed class Boxes : ApplicationContext
                     if (Windows.Count != 2 || Windows[0].Bounds.IntersectsWith(Windows[1].Bounds)) throw new InvalidOperationException("New box failed");
                     test.State.Items.Clear(); test.RefreshItems(); test.RenderPreview();
                     if (Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR") is { } previews) { SettingsWindow.RenderPreview(this, previews); using var trayMenu = TrayMenu(); Menus.RenderPreview(trayMenu, Path.Combine(previews, "menu-tray.png"), 3); }
+                    Console.WriteLine("Smoke test passed");
+                }
+                catch (Exception e)
+                {
+                    // Without this the exception is lost when the message loop exits, and the run reports success.
+                    Console.Error.WriteLine("Smoke test failed: " + e); Environment.ExitCode = 1;
                 }
                 finally
                 {
