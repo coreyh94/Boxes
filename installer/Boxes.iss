@@ -25,7 +25,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 OutputDir=..\release
-OutputBaseFilename=Boxes-Setup-{#AppVersion}
+OutputBaseFilename=Boxes-Setup
 Compression=lzma2/max
 SolidCompression=yes
 ; Boxes is closed by [Code] below; Restart Manager can't close a tray app whose windows hide on close.

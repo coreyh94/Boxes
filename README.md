@@ -1,16 +1,25 @@
 # Boxes
 
+## [⬇ Download Boxes for Windows](https://github.com/coreyh94/Boxes/releases/latest/download/Boxes-Setup.exe)
+
+1. Click the link above to download **Boxes-Setup.exe**.
+2. Open the downloaded file. If Windows says "Windows protected your PC", click **More info**, then **Run anyway**.
+3. Click **Install**, then **Finish**. Boxes starts straight away and starts with Windows from then on.
+4. Double-click the Boxes icon by the clock to make your first box, then drag files, folders or shortcuts into it.
+
+To remove Boxes, go to **Settings › Apps › Installed apps › Boxes › Uninstall**.
+
+---
+
 A native Windows 11 desktop organiser using .NET 10 Windows Forms. No browser engine, network service, or third-party packages. Boxes never connects to the internet.
 
-## Download
+## Installing in more detail
 
-Download **`Boxes-Setup-<version>.exe`** from the [latest release](https://github.com/coreyh94/Boxes/releases/latest) and run it. It installs Boxes for your account only (no admin prompt), adds it to the Start menu, starts it with Windows, and can be removed from **Settings › Apps › Installed apps**. Uninstalling asks whether to keep your boxes and saved items. Running the setup again upgrades Boxes in place.
+The installer works on 64-bit Windows 10 and 11, and .NET is included. It installs Boxes for your account only, so there's no admin prompt, and adds it to the Start menu. Running a newer setup upgrades Boxes in place. Uninstalling asks whether to keep your boxes and saved items.
 
-For 64-bit Windows 10 and 11. Nothing else is needed; .NET is included.
+Prefer no installer? [Boxes-Portable.exe](https://github.com/coreyh94/Boxes/releases/latest/download/Boxes-Portable.exe) is the same app as a single file. Move it somewhere permanent before the first run, because Boxes starts with Windows from wherever it was first run.
 
-Prefer no installer? `Boxes-v<version>-win-x64.exe` is the same app as a single portable file. Move it somewhere permanent before the first run, because Boxes starts with Windows from wherever it was first run.
-
-Neither file is code-signed, so Windows SmartScreen may show "Windows protected your PC". Choose **More info › Run anyway**.
+Neither file is code-signed, which is why Windows SmartScreen shows a warning. Older versions are on the [releases page](https://github.com/coreyh94/Boxes/releases).
 
 When a box would cover desktop icons, Boxes moves the icons into free space. To do that it turns off the desktop's **Auto arrange icons** and **Align icons to grid** settings, which stay off after Boxes exits.
 
@@ -29,7 +38,7 @@ To build both release downloads (the installer needs [Inno Setup 6](https://jrso
 .\build-release.ps1
 ```
 
-This writes `Boxes-Setup-<version>.exe` and the portable `Boxes-v<version>-win-x64.exe` to `release\`. The version comes from `<Version>` in `DesktopBoxes.csproj`.
+This writes `Boxes-Setup.exe` and `Boxes-Portable.exe` to `release\`, ready to attach to a GitHub release under those names so the download links above keep working. The version comes from `<Version>` in `DesktopBoxes.csproj`.
 
 ## Controls
 
