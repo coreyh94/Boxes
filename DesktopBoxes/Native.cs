@@ -18,6 +18,8 @@ internal static class Native {
  if(h==-1)throw new IOException("Couldn't read "+path,Marshal.GetHRForLastWin32Error());
  FindClose(h);return data.Reserved0;
  }
+ /// <summary>Shows Explorer's Properties dialog; type 2 = SHOP_FILEPATH.</summary>
+ [DllImport("shell32.dll",CharSet=CharSet.Unicode)] internal static extern bool SHObjectProperties(nint hwnd,uint type,string name,string? page);
  internal static void KeepOnDesktop(IEnumerable<Box> boxes){
  var fg=GetForegroundWindow();var cls=new StringBuilder(256);GetClassName(fg,cls,256);
  bool desktop=cls.ToString() is "Progman" or "WorkerW";

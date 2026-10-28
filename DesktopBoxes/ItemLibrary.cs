@@ -29,6 +29,8 @@ internal sealed class ItemLibrary(string root)
         var destination = Path.Combine(directory, "content", name);
         if (File.Exists(destination) || Directory.Exists(destination)) return destination;
         if (!File.Exists(source) && !Directory.Exists(source)) throw new FileNotFoundException("Original item is missing", source);
+        // The earlier copy of this source was renamed inside a box; keep it and save a fresh copy beside it.
+        if (Directory.Exists(directory)) { directory += "-" + Guid.NewGuid().ToString("N")[..8]; destination = Path.Combine(directory, "content", name); }
         // Never copy the library into itself, or follow junctions/symlinks outside a dropped folder.
         if (Root.Equals(source, StringComparison.OrdinalIgnoreCase) || Root.StartsWith(source + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             throw new IOException("This folder contains the Boxes library.");

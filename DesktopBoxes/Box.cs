@@ -95,17 +95,20 @@ public sealed class Box : Form
         interval = Menus.Submenu("Change photo every", Menus.Icons.Timer, [.. Intervals.Select(i => (i.Label, (Action)(() => SetInterval(i.Seconds))))]);
         var titleBar = Menus.Item("Hide title bar", Menus.Icons.Hide, () => SetTitleHidden(!State.HideTitle));
         var rename = Menus.Item("Rename", Menus.Icons.Rename, () => { title.Focus(); title.SelectAll(); });
+        var paste = Menus.Item("Paste", Menus.Icons.Paste, Paste); paste.ShortcutKeyDisplayString = "Ctrl+V";
+        items.KeyDown += (_, e) => { if (e.KeyData == (Keys.Control | Keys.V)) { Paste(); e.SuppressKeyPress = true; } };
         menu.Opening += (_, _) =>
         {
             swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour)); opacity.Value = State.Opacity ?? owner.Settings.BoxOpacity;
             changePhoto.Visible = State.Photo != null; nextPhoto.Visible = changeFolder.Visible = interval.Visible = State.PhotoFolder != null;
             Menus.Tick(interval, Array.FindIndex(Intervals, i => i.Seconds == State.SlideSeconds));
             titleBar.Text = State.HideTitle ? "Show title bar" : "Hide title bar"; rename.Visible = !State.HideTitle;
+            paste.Visible = State.Photo == null && State.PhotoFolder == null && CanPaste;
             titleBar.Image?.Dispose(); titleBar.Image = Menus.Glyph(State.HideTitle ? Menus.Icons.Show : Menus.Icons.Hide, Theme.Muted);
         };
         menu.Items.AddRange([
             Menus.Spacer(), swatches, opacity, Menus.Separator(),
-            changePhoto, nextPhoto, changeFolder, interval, titleBar,
+            paste, changePhoto, nextPhoto, changeFolder, interval, titleBar,
             Menus.Item("New box", Menus.Icons.Add, () => owner.Add()),
             Menus.Item("New photo box…", Menus.Icons.Photo, () => _ = owner.AddPhotoBoxAsync()),
             Menus.Item("New slideshow box…", Menus.Icons.Slideshow, () => owner.AddSlideshowBox()),
@@ -313,6 +316,158 @@ public sealed class Box : Form
         if (!owner.Place(this, proposed)) { Bounds = new Rectangle(State.X, State.Y, State.Width, State.Height); return; }
         Bounds = proposed; State.X = Left; State.Y = Top; State.Width = Width; State.Height = Height; owner.Save();
     }
+    /// <summary>Right-click menu for an item: the usual Explorer verbs, acting on the saved copy.</summary>
+    ContextMenuStrip ItemMenu(ItemTile tile, string path, Action open)
+    {
+        var menu = Menus.Create(accent);
+        static ToolStripMenuItem Keyed(ToolStripMenuItem item, string keys) { item.ShortcutKeyDisplayString = keys; return item; }
+        bool saved = owner.Library.Contains(path), program = Runnable.Contains(Path.GetExtension(path).ToLowerInvariant());
+        var openWith = Menus.Item("Open with…", Menus.Icons.OpenWith, () => Run("rundll32.exe", "shell32.dll,OpenAs_RunDLL " + path));
+        var admin = Menus.Item("Run as administrator", Menus.Icons.Shield, () => Run(path, verb: "runas"));
+        var location = Menus.Item("Open file location", Menus.Icons.Folder, () => { if (ShortcutTarget(path) is { } target) Reveal(target); });
+        // Started once the menu has closed, so the menu taking focus back doesn't end the edit straight away.
+        var rename = Keyed(Menus.Item("Rename", Menus.Icons.Rename, () => BeginInvoke(() => BeginRename(tile, path))), "F2");
+        menu.Opening += (_, _) =>
+        {
+            openWith.Visible = File.Exists(path) && !program; admin.Visible = program; rename.Visible = saved;
+            location.Visible = IsLink(path) && ShortcutTarget(path) != null;
+        };
+        menu.Items.AddRange([
+            Menus.Spacer(), Menus.Item("Open", Menus.Icons.Open, open), openWith, admin, location,
+            Menus.Item("Show saved file", Menus.Icons.Reveal, () => Reveal(path)),
+            Menus.Separator(),
+            Keyed(Menus.Item("Cut", Menus.Icons.Cut, () => CopyItem(path, move: true)), "Ctrl+X"),
+            Keyed(Menus.Item("Copy", Menus.Icons.Copy, () => CopyItem(path, move: false)), "Ctrl+C"),
+            Keyed(Menus.Item("Copy as path", Menus.Icons.Link, () => CopyPath(path)), "Ctrl+Shift+C"),
+            rename,
+            Keyed(Menus.Item("Properties", Menus.Icons.Info, () => Native.SHObjectProperties(Handle, 2, path, null)), "Alt+Enter"),
+            Menus.Separator(),
+            Keyed(Menus.Item("Remove from box", Menus.Icons.Remove, () => RemoveFromBox(path), danger: true), "Del"), Menus.Spacer()]);
+        return menu;
+    }
+    static readonly HashSet<string> Runnable = [".exe", ".lnk", ".bat", ".cmd", ".msi", ".com"];
+    static bool IsLink(string path) => Path.GetExtension(path).Equals(".lnk", StringComparison.OrdinalIgnoreCase);
+    void Run(string file, string arguments = "", string? verb = null)
+    {
+        try { Process.Start(new ProcessStartInfo(file, arguments) { UseShellExecute = true, Verb = verb ?? "" }); }
+        catch (System.ComponentModel.Win32Exception e) when (e.NativeErrorCode == 1223) { } // UAC prompt cancelled
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException) { SetMessage("Couldn't open this item."); }
+    }
+    static void Reveal(string path) => Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + path + "\"") { UseShellExecute = true });
+    void CopyPath(string path) { try { Clipboard.SetText("\"" + path + "\""); } catch (ExternalException) { SetMessage("The clipboard is busy. Try again."); } }
+    /// <summary>Where a .lnk points, if that file or folder still exists.</summary>
+    static string? ShortcutTarget(string lnk)
+    {
+        object? shell = null, link = null;
+        try
+        {
+            shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!; link = ((dynamic)shell).CreateShortcut(lnk);
+            string target = ((dynamic)link).TargetPath; return target.Length > 0 && (File.Exists(target) || Directory.Exists(target)) ? target : null;
+        }
+        catch (COMException) { return null; }
+        finally { foreach (var o in new[] { link, shell }) if (o != null) Marshal.ReleaseComObject(o); }
+    }
+    /// <summary>Explorer's shortcuts on a selected tile. Run after the key event, since some rebuild (dispose) the tiles.</summary>
+    bool ItemKey(Keys keys, ItemTile tile, string path)
+    {
+        Action? action = keys switch
+        {
+            Keys.F2 => () => { if (owner.Library.Contains(path)) BeginRename(tile, path); },
+            Keys.Control | Keys.C => () => CopyItem(path, move: false),
+            Keys.Control | Keys.X => () => CopyItem(path, move: true),
+            Keys.Control | Keys.Shift | Keys.C => () => CopyPath(path),
+            Keys.Control | Keys.V => Paste,
+            Keys.Alt | Keys.Enter => () => Native.SHObjectProperties(Handle, 2, path, null),
+            Keys.Delete => () => RemoveFromBox(path),
+            _ => null,
+        };
+        if (action != null) BeginInvoke(action);
+        return action != null;
+    }
+    void RemoveFromBox(string path) { if (owner.Busy) return; State.Items.Remove(path); RefreshItems(); owner.Save(); }
+
+    /// <summary>The item last cut, until it's pasted into a box or Explorer moves its file away (see <see cref="SettleCut"/>).</summary>
+    static (Box From, string Path)? cut;
+    /// <summary>
+    /// Puts the saved file on the clipboard like Explorer does, so it pastes into folders as well as boxes.
+    /// Cut marks it "move": pasting into another box moves the item; pasting into a folder moves the file out of the box.
+    /// </summary>
+    void CopyItem(string path, bool move)
+    {
+        var previous = cut?.From; cut = move ? (this, path) : null;
+        var data = new DataObject(); data.SetFileDropList([path]);
+        data.SetData("Preferred DropEffect", new MemoryStream(BitConverter.GetBytes(move ? 2 : 1)));
+        try { Clipboard.SetDataObject(data, true); } catch (ExternalException) { SetMessage("The clipboard is busy. Try again."); cut = null; }
+        if (previous != null && previous != this && !previous.IsDisposed) previous.MarkCut();
+        MarkCut();
+    }
+    /// <summary>Fades the cut tile, as Explorer does, without rebuilding the tiles.</summary>
+    void MarkCut()
+    {
+        foreach (var tile in items.Controls.OfType<ItemTile>())
+        {
+            bool ghost = cut is { } c && c.From == this && tile.Tag is string p && p.Equals(c.Path, StringComparison.OrdinalIgnoreCase);
+            if (tile.Ghost != ghost) { tile.Ghost = ghost; tile.Invalidate(); }
+        }
+    }
+    static bool CanPaste { get { try { return Clipboard.ContainsFileDropList(); } catch (ExternalException) { return false; } } }
+    internal void Paste()
+    {
+        if (owner.Busy || State.Photo != null || State.PhotoFolder != null || !CanPaste) return;
+        var paths = Clipboard.GetFileDropList().Cast<string>().ToArray();
+        if (cut is { } c && paths.Length == 1 && paths[0].Equals(c.Path, StringComparison.OrdinalIgnoreCase))
+        {
+            cut = null; Clipboard.Clear();
+            if (c.From != this && !c.From.IsDisposed && c.From.State.Items.Contains(c.Path)) owner.MoveItem(c.From, c.Path, this, State.Items.Count);
+            else if (!c.From.IsDisposed) c.From.MarkCut();
+            return;
+        }
+        _ = owner.ImportItemsAsync(this, paths);
+    }
+    /// <summary>Called on the app timer: once Explorer has moved a cut item's file away, take the item out of its box.</summary>
+    internal static void SettleCut()
+    {
+        if (cut is not { } c || File.Exists(c.Path) || Directory.Exists(c.Path)) return;
+        cut = null; if (!c.From.IsDisposed && c.From.State.Items.Remove(c.Path)) { c.From.RefreshItems(); c.From.owner.Save(); }
+    }
+
+    /// <summary>Edits the name in place over the tile, like the desktop. Shortcuts keep their hidden .lnk/.url extension.</summary>
+    void BeginRename(ItemTile tile, string path)
+    {
+        if (owner.Busy || tile.IsDisposed) return;
+        bool hidden = IsLink(path) || Path.GetExtension(path).Equals(".url", StringComparison.OrdinalIgnoreCase);
+        var editor = new TextBox { Text = tile.Text, Font = Theme.Label, BorderStyle = BorderStyle.FixedSingle, BackColor = Theme.Mix(BackColor, Color.Black, .35f), ForeColor = Theme.Ink, TextAlign = HorizontalAlignment.Center };
+        var at = PointToClient(tile.PointToScreen(Point.Empty));
+        editor.Bounds = new Rectangle(at.X - Theme.S(6), at.Y + Theme.S(44), tile.Width + Theme.S(12), editor.PreferredHeight);
+        Controls.Add(editor); editor.BringToFront(); Activate(); editor.Focus();
+        editor.Select(0, hidden || Directory.Exists(path) ? editor.Text.Length : Path.GetFileNameWithoutExtension(editor.Text).Length);
+        bool done = false;
+        void Finish(bool keep)
+        {
+            if (done) return; done = true;
+            var name = editor.Text.Trim(); BeginInvoke(editor.Dispose);
+            if (keep && name.Length > 0 && name != tile.Text) RenameItem(path, hidden ? name + Path.GetExtension(path) : name);
+        }
+        editor.KeyDown += (_, e) => { if (e.KeyCode is Keys.Enter or Keys.Escape) { Finish(e.KeyCode == Keys.Enter); e.SuppressKeyPress = true; } };
+        editor.LostFocus += (_, _) => Finish(true);
+    }
+    internal void RenameItem(string path, string name)
+    {
+        if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name.Trim('.').Length == 0) { SetMessage("Names can't contain \\ / : * ? \" < > |"); return; }
+        var renamed = Path.Combine(Path.GetDirectoryName(path)!, name);
+        try { if (Directory.Exists(path)) Directory.Move(path, renamed); else File.Move(path, renamed); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { SetMessage("Couldn't rename: " + e.Message); return; }
+        // The same saved file can sit in several boxes (copy and paste between boxes).
+        foreach (var box in owner.Windows)
+        {
+            bool changed = false;
+            for (int i = 0; i < box.State.Items.Count; i++) if (box.State.Items[i].Equals(path, StringComparison.OrdinalIgnoreCase)) { box.State.Items[i] = renamed; changed = true; }
+            if (changed) box.RefreshItems();
+        }
+        if (cut is { } c && c.Path.Equals(path, StringComparison.OrdinalIgnoreCase)) cut = (c.From, renamed);
+        owner.Save();
+    }
+
     internal void RefreshItems()
     {
         items.SuspendLayout();
@@ -329,7 +484,7 @@ public sealed class Box : Form
                 catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException) { SetMessage("Couldn't open this item. Check its saved file."); }
             }
             tile.MouseDoubleClick += (_, e) => { if (e.Button == MouseButtons.Left) Open(); };
-            tile.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { Open(); e.SuppressKeyPress = true; } };
+            tile.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter && !e.Alt) { Open(); e.SuppressKeyPress = true; } else if (ItemKey(e.KeyData, tile, path)) e.SuppressKeyPress = true; };
             tips.SetToolTip(tile, owner.Library.Contains(path) ? name : name + "\nOriginal unavailable — drop it again to save a copy");
             Point? press = null;
             tile.MouseDown += (_, e) => { if (e.Button != MouseButtons.Middle) Select(tile); press = e.Button == MouseButtons.Left ? e.Location : null; };
@@ -341,12 +496,8 @@ public sealed class Box : Form
                 if (Math.Abs(e.X - start.X) < drag.Width && Math.Abs(e.Y - start.Y) < drag.Height) return;
                 press = null; tile.Capture = false; StartTileDrag(tile, path);
             };
-            var itemMenu = Menus.Create(accent);
-            itemMenu.Items.AddRange([
-                Menus.Spacer(), Menus.Item("Open", Menus.Icons.Open, Open),
-                Menus.Item("Show saved file", Menus.Icons.Reveal, () => Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + path + "\"") { UseShellExecute = true })),
-                Menus.Separator(),
-                Menus.Item("Remove from box", Menus.Icons.Remove, () => { if (owner.Busy) return; State.Items.Remove(path); RefreshItems(); owner.Save(); }, danger: true), Menus.Spacer()]);
+            tile.Ghost = cut is { } c && c.From == this && c.Path.Equals(path, StringComparison.OrdinalIgnoreCase);
+            var itemMenu = ItemMenu(tile, path, Open);
             tile.ContextMenuStrip = itemMenu;
             tile.Disposed += (_, _) => { tile.Image?.Dispose(); itemMenu.Dispose(); };
             EnableDrop(tile); items.Controls.Add(tile);
@@ -394,6 +545,7 @@ public sealed class Box : Form
             items.Controls.OfType<ItemTile>().First().Selected = true; // show the selected style
             using var bitmap = new Bitmap(Width, Height); DrawToBitmap(bitmap, ClientRectangle); bitmap.Save(Path.Combine(output, "boxes-populated.png"));
             swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour)); Menus.RenderPreview(menu, Path.Combine(output, "menu-box.png"), 3);
+            using (var itemMenu = ItemMenu(new ItemTile(), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "notepad.exe"), () => { })) Menus.RenderPreview(itemMenu, Path.Combine(output, "menu-item.png"), 7);
             foreach (Control c in items.Controls.Cast<Control>().ToArray()) c.Dispose();
             Size = new Size(Theme.S(288), Theme.S(240)); PerformLayout(); LayoutChrome();
             using var empty = new Bitmap(Width, Height); DrawToBitmap(empty, ClientRectangle); empty.Save(Path.Combine(output, "boxes-compact.png"));

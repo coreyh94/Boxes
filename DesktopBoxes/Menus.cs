@@ -81,7 +81,7 @@ internal static class Menus
     /// <summary>Segoe Fluent Icons code points used by the menus.</summary>
     internal static class Icons
     {
-        internal const char Update = '';
+        internal const char Update = '', Cut = '', Copy = '', Paste = '', Link = '', Info = '', Shield = '', OpenWith = '';
         internal const char Timer = '', Check = '';
         internal const char Add = '', Show = '', Hide = '', Folder = '', Settings = '', Exit = '';
         internal const char Rename = '', Delete = '', Open = '', Reveal = '', Remove = '', More = '', Photo = '', Slideshow = '', Next = '';

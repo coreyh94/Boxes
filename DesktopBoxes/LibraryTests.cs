@@ -33,6 +33,10 @@ internal static class LibraryTests
             var savedUrl = library.Import(url); File.Delete(url);
             Require(File.ReadAllText(savedUrl).Contains("URL=https://example.com/"), "URL shortcut lost");
             TestShortcut(root, desktop, library);
+            var report = Path.Combine(desktop, "report.txt"); File.WriteAllText(report, "first");
+            var savedReport = library.Import(report); var renamedReport = Path.Combine(Path.GetDirectoryName(savedReport)!, "Q3 report.txt"); File.Move(savedReport, renamedReport);
+            var again = library.Import(report);
+            Require(again != savedReport && File.ReadAllText(again) == "first" && File.Exists(renamedReport), "Re-dropping a renamed item failed");
             var failed = false;
             try { library.Import(Path.Combine(desktop, "missing.txt")); } catch (FileNotFoundException) { failed = true; }
             Require(failed, "Missing original silently accepted");

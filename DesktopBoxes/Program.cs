@@ -71,6 +71,11 @@ public sealed class Boxes : ApplicationContext
                         shot.Save(Path.Combine(shots, "box-opacity.png"));
                     }
                     test.State.Opacity = null; test.ApplyOpacity();
+                    var item = test.State.Items[0]; test.RenameItem(item, "Renamed site.url");
+                    if (test.State.Items[0] != Path.Combine(Path.GetDirectoryName(item)!, "Renamed site.url") || !File.Exists(test.State.Items[0]) || File.Exists(item))
+                        throw new InvalidOperationException("Item rename failed");
+                    test.RenameItem(test.State.Items[0], "bad:name.url");
+                    if (Path.GetFileName(test.State.Items[0]) != "Renamed site.url") throw new InvalidOperationException("Invalid name accepted");
                     Add();
                     if (Windows.Count != 2 || Windows[0].Bounds.IntersectsWith(Windows[1].Bounds)) throw new InvalidOperationException("New box failed");
                     // Moving between boxes and reordering within one keeps the same saved file.
@@ -160,7 +165,7 @@ public sealed class Boxes : ApplicationContext
         displaysSettled.Tick += (_, _) => { displaysSettled.Stop(); FitToScreens(); ProtectIcons(); };
         SystemEvents.DisplaySettingsChanged += DisplaysChanged;
         if (Windows.Count > 0) Windows[0].BeginInvoke(async () => await MigrateItemsAsync());
-        timer.Tick += (_, _) => { Native.KeepOnDesktop(Windows); ProtectIcons(); PinTrayOnce(); }; timer.Start();
+        timer.Tick += (_, _) => { Native.KeepOnDesktop(Windows); ProtectIcons(); PinTrayOnce(); Box.SettleCut(); }; timer.Start();
     }
     void DisplaysChanged(object? sender, EventArgs e) { displaysSettled.Stop(); displaysSettled.Start(); }
     /// <summary>Places every box for the current monitors (see Placement.Fit). Saved positions are never changed here.</summary>
