@@ -1,6 +1,6 @@
 # Boxes
 
-A native Windows 11 desktop organiser using .NET 10 Windows Forms, inspired by Stardock Fences. No browser engine, network service, or third-party packages. Boxes never connects to the internet.
+A native Windows 11 desktop organiser using .NET 10 Windows Forms. No browser engine, network service, or third-party packages. Boxes never connects to the internet.
 
 ## Download
 
