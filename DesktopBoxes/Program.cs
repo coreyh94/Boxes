@@ -172,9 +172,18 @@ public sealed class Boxes : ApplicationContext
         if (pinAttempts > 80 || string.Equals(Settings.TrayPinnedFor, Application.ExecutablePath, StringComparison.OrdinalIgnoreCase)) return;
         pinAttempts++; if (TrayPin.Set(true)) { Settings.TrayPinnedFor = Application.ExecutablePath; Settings.Save(); }
     }
-    internal async Task CheckForUpdateAsync()
+    /// <summary>Scheduled checks stay quiet unless there's something new; a manual check always reports back.</summary>
+    internal async Task CheckForUpdateAsync(bool manual = false)
     {
-        if (!Settings.CheckForUpdates || await Updates.CheckAsync() is not { } found || found.Version == update?.Version) return;
+        if (!manual && !Settings.CheckForUpdates) return;
+        var found = await Updates.LatestAsync();
+        if (found == null || found.Version <= Updates.Current)
+        {
+            if (manual) tray.ShowBalloonTip(5000, found == null ? "Couldn't check for updates" : "Boxes is up to date",
+                found == null ? "GitHub couldn't be reached. Try again later." : $"You have the latest version, {Updates.Current}.", ToolTipIcon.Info);
+            return;
+        }
+        if (!manual && found.Version == update?.Version) return;
         update = found;
         tray.ShowBalloonTip(15000, $"Boxes {found.Version} is available", Updates.Installed ? "Click to install it. Your boxes and saved items are kept." : "Click to download it from GitHub.", ToolTipIcon.Info);
     }
@@ -195,10 +204,10 @@ public sealed class Boxes : ApplicationContext
             if (userHidden) foreach (var b in Windows) b.Hide();
             else { FitToScreens(); ProtectIcons(); }
         });
-        var install = Menus.Item("Install update", Menus.Icons.Update, InstallUpdate); install.Visible = false;
+        var updates = Menus.Item("Check for updates", Menus.Icons.Update, () => { if (update != null) InstallUpdate(); else _ = CheckForUpdateAsync(manual: true); });
         menu.Opening += (_, _) =>
         {
-            install.Visible = update != null; if (update != null) install.Text = Updates.Installed ? $"Install Boxes {update.Version}" : $"Get Boxes {update.Version}…";
+            updates.Text = update == null ? "Check for updates" : Updates.Installed ? $"Install Boxes {update.Version}" : $"Get Boxes {update.Version}…";
             bool shown = Windows.Any(b => b.Visible);
             toggle.Text = shown ? "Hide boxes" : "Show boxes"; toggle.Image?.Dispose(); toggle.Image = Menus.Glyph(shown ? Menus.Icons.Hide : Menus.Icons.Show, Theme.Muted);
         };
@@ -209,7 +218,7 @@ public sealed class Boxes : ApplicationContext
             Menus.Item("New photo box…", Menus.Icons.Photo, () => _ = AddPhotoBoxAsync()),
             Menus.Item("New slideshow box…", Menus.Icons.Slideshow, () => AddSlideshowBox()), toggle,
             Menus.Item("Saved items", Menus.Icons.Folder, () => { Directory.CreateDirectory(Library.Root); Process.Start(new ProcessStartInfo(Library.Root) { UseShellExecute = true }); }),
-            Menus.Item("Settings…", Menus.Icons.Settings, () => SettingsWindow.Open(this)), install,
+            Menus.Item("Settings…", Menus.Icons.Settings, () => SettingsWindow.Open(this)), updates,
             Menus.Separator(),
             Menus.Item("Exit", Menus.Icons.Exit, RequestExit), Menus.Spacer()]);
         return menu;

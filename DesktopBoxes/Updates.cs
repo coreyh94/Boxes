@@ -39,16 +39,15 @@ internal static class Updates
         return new(Trim(version), root.GetProperty("html_url").GetString()!, setup, sha);
     }
 
-    /// <summary>A newer release, or null if up to date or GitHub can't be reached.</summary>
-    internal static async Task<Release?> CheckAsync()
+    /// <summary>The latest published release, or null if GitHub can't be reached.</summary>
+    internal static async Task<Release?> LatestAsync()
     {
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, Latest);
             request.Headers.Accept.ParseAdd("application/vnd.github+json");
             using var response = await http.SendAsync(request); if (!response.IsSuccessStatusCode) return null;
-            var release = Parse(await response.Content.ReadAsStringAsync());
-            return release != null && release.Version > Current ? release : null;
+            return Parse(await response.Content.ReadAsStringAsync());
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException or KeyNotFoundException or InvalidOperationException) { return null; }
     }
