@@ -13,7 +13,7 @@ public class State
     public string Name { get; set; } = "My box";
     public int X { get; set; } = 48; public int Y { get; set; } = 48;
     public int Width { get; set; } = 384; public int Height { get; set; } = 288;
-    public int Colour { get; set; } = Color.SteelBlue.ToArgb();
+    public int Colour { get; set; } = SwatchRow.Palette[0].Colour.ToArgb();
     public List<string> Items { get; set; } = [];
     /// <summary>Saved copy of the photo for a photo box; null for an ordinary item box.</summary>
     public string? Photo { get; set; }

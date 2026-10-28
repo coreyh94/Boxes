@@ -19,6 +19,17 @@ internal static class Theme
     internal static readonly Color Card = Color.FromArgb(24, 27, 35);
     internal static Color Mix(Color a, Color b, float amount) => Color.FromArgb(
         (int)(a.R * (1 - amount) + b.R * amount), (int)(a.G * (1 - amount) + b.G * amount), (int)(a.B * (1 - amount) + b.B * amount));
+    /// <summary>
+    /// A box background in the swatch's own hue: fixed dark lightness so the light text stays readable, and most of the
+    /// swatch's saturation. Blending into <see cref="Card"/> instead washes every colour towards grey.
+    /// </summary>
+    internal static Color Tint(Color swatch) => FromHsl(swatch.GetHue(), Math.Min(.7f, swatch.GetSaturation() * .75f), .26f);
+    static Color FromHsl(float hue, float saturation, float lightness)
+    {
+        float c = (1 - Math.Abs(2 * lightness - 1)) * saturation, h = hue / 60, x = c * (1 - Math.Abs(h % 2 - 1)), m = lightness - c / 2;
+        var (r, g, b) = (int)h switch { 0 => (c, x, 0f), 1 => (x, c, 0f), 2 => (0f, c, x), 3 => (0f, x, c), 4 => (x, 0f, c), _ => (c, 0f, x) };
+        return Color.FromArgb((int)Math.Round((r + m) * 255), (int)Math.Round((g + m) * 255), (int)Math.Round((b + m) * 255));
+    }
     internal static GraphicsPath Round(RectangleF r, float radius)
     {
         var p = new GraphicsPath(); float d = radius * 2;
@@ -277,8 +288,10 @@ public sealed class Box : Form
     }
     void Recolour()
     {
+        // Before 1.2.0 new boxes defaulted to SteelBlue, which isn't in the palette; give them Ocean so the swatch menu shows a choice.
+        if (State.Colour == Color.SteelBlue.ToArgb()) State.Colour = SwatchRow.Palette[0].Colour.ToArgb();
         accent = Theme.Mix(Color.FromArgb(State.Colour), Color.White, .15f);
-        BackColor = Theme.Mix(Theme.Card, accent, .24f);
+        BackColor = Theme.Tint(Color.FromArgb(State.Colour));
         header.BackColor = title.BackColor = scroller.BackColor = items.BackColor = status.BackColor = grip.BackColor = options.BackColor = photo.BackColor = BackColor; photo.Accent = accent; photo.Invalidate();
         items.Accent = options.Accent = grip.Accent = scroller.Accent = accent;
         foreach (var tile in items.Controls.OfType<ItemTile>()) { tile.Accent = accent; if (tile.ContextMenuStrip != null) Menus.SetAccent(tile.ContextMenuStrip, accent); }
