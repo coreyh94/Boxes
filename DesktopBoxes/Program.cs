@@ -56,6 +56,8 @@ public sealed class Boxes : ApplicationContext
                     var saved = test.State.Items[0]; var other = Windows[1];
                     MoveItem(test, saved, other, 0);
                     if (test.State.Items.Count != 0 || other.State.Items.SingleOrDefault() != saved || !File.Exists(saved)) throw new InvalidOperationException("Move between boxes failed");
+                    if (other.SelectedTile?.Tag as string != saved || !other.SelectedTile.Selected) throw new InvalidOperationException("Moved item not selected");
+                    Box.Select(null); if (other.SelectedTile != null) throw new InvalidOperationException("Selection did not clear");
                     other.State.Items.AddRange(["b", "c"]); MoveItem(other, saved, other, 3);
                     if (!other.State.Items.SequenceEqual(["b", "c", saved])) throw new InvalidOperationException("Reorder within a box failed: " + string.Join(",", other.State.Items));
                     other.State.Items.RemoveAll(i => i is "b" or "c"); MoveItem(other, saved, test, 0);
@@ -185,7 +187,7 @@ public sealed class Boxes : ApplicationContext
             // Already in the target box: the move just merges the two.
             if (!to.State.Items.Contains(path, StringComparer.OrdinalIgnoreCase)) to.InsertItem(path, index);
         }
-        Save();
+        to.SelectPath(path); Save();
     }
     internal void Save() { if (smokeMode) return; File.WriteAllText(file + ".tmp", JsonSerializer.Serialize(Windows.Select(b => b.State), new JsonSerializerOptions { WriteIndented = true })); File.Move(file + ".tmp", file, true); }
     internal void RequestExit() { if (Busy) { exitPending = true; Status("Finishing saving items before exit"); } else ExitThread(); }

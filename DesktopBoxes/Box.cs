@@ -107,6 +107,9 @@ public sealed class Box : Form
             Moving = true; Native.ReleaseCapture(); Native.SendMessage(Handle, 0xA1, 17, 0); Snap(); Moving = false;
         };
         foreach (var c in new Control[] { this, scroller, items, header }) EnableDrop(c);
+        // Clicking empty space in the box, or anywhere outside it, clears the selection.
+        items.MouseDown += (_, _) => { if (SelectedTile != null) Select(null); };
+        Deactivate += (_, _) => { if (SelectedTile != null) Select(null); };
         Recolour(); RefreshItems(); LayoutChrome();
     }
 
@@ -152,6 +155,18 @@ public sealed class Box : Form
             if (p.Y < tiles[i].Top || (p.Y < tiles[i].Bottom && p.X < tiles[i].Left + tiles[i].Width / 2)) return i;
         return tiles.Length;
     }
+    /// <summary>One selected tile across all boxes, like desktop icons.</summary>
+    static ItemTile? selected;
+    internal static void Select(ItemTile? tile)
+    {
+        if (selected == tile) return;
+        if (selected is { IsDisposed: false } old) { old.Selected = false; old.Invalidate(); }
+        selected = tile; if (tile == null) return;
+        tile.Selected = true; tile.Invalidate();
+        tile.Disposed += (_, _) => { if (selected == tile) selected = null; };
+    }
+    internal void SelectPath(string path) => Select(items.Controls.OfType<ItemTile>().FirstOrDefault(t => Equals(t.Tag, path)));
+    internal ItemTile? SelectedTile => selected is { IsDisposed: false } t && items.Controls.Contains(t) ? t : null;
     /// <summary>Inserts an item already in the library at a slot (used by moves between and within boxes).</summary>
     internal void InsertItem(string path, int index) { State.Items.Insert(Math.Clamp(index, 0, State.Items.Count), path); RefreshItems(); }
     internal void RemoveItem(string path) { State.Items.Remove(path); RefreshItems(); }
@@ -219,15 +234,18 @@ public sealed class Box : Form
         {
             var name = Path.GetFileName(path);
             if (Path.GetExtension(path).Equals(".lnk", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(path).Equals(".url", StringComparison.OrdinalIgnoreCase)) name = Path.GetFileNameWithoutExtension(path);
-            var tile = new ItemTile { Text = name, AccessibleName = name, Accent = accent, Image = ShellImage.Load(path) };
-            tile.Click += (_, _) =>
+            var tile = new ItemTile { Text = name, AccessibleName = name, Accent = accent, Image = ShellImage.Load(path), Tag = path };
+            // Like the desktop: press selects, double-click (or Enter) opens, press-and-move drags.
+            void Open()
             {
                 try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
                 catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException) { SetMessage("Couldn't open this item. Check its saved file."); }
-            };
+            }
+            tile.MouseDoubleClick += (_, e) => { if (e.Button == MouseButtons.Left) Open(); };
+            tile.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { Open(); e.SuppressKeyPress = true; } };
             tips.SetToolTip(tile, owner.Library.Contains(path) ? name : name + "\nOriginal unavailable — drop it again to save a copy");
             Point? press = null;
-            tile.MouseDown += (_, e) => press = e.Button == MouseButtons.Left ? e.Location : null;
+            tile.MouseDown += (_, e) => { if (e.Button != MouseButtons.Middle) Select(tile); press = e.Button == MouseButtons.Left ? e.Location : null; };
             tile.MouseUp += (_, _) => press = null;
             tile.MouseMove += (_, e) =>
             {
@@ -238,7 +256,7 @@ public sealed class Box : Form
             };
             var itemMenu = Menus.Create(accent);
             itemMenu.Items.AddRange([
-                Menus.Spacer(), Menus.Item("Open", Menus.Icons.Open, () => tile.PerformClick()),
+                Menus.Spacer(), Menus.Item("Open", Menus.Icons.Open, Open),
                 Menus.Item("Show saved file", Menus.Icons.Reveal, () => Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + path + "\"") { UseShellExecute = true })),
                 Menus.Separator(),
                 Menus.Item("Remove from box", Menus.Icons.Remove, () => { if (owner.Busy) return; State.Items.Remove(path); RefreshItems(); owner.Save(); }, danger: true), Menus.Spacer()]);
@@ -286,6 +304,7 @@ public sealed class Box : Form
         if (output != null)
         {
             Directory.CreateDirectory(output);
+            items.Controls.OfType<ItemTile>().First().Selected = true; // show the selected style
             using var bitmap = new Bitmap(Width, Height); DrawToBitmap(bitmap, ClientRectangle); bitmap.Save(Path.Combine(output, "boxes-populated.png"));
             swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour)); Menus.RenderPreview(menu, Path.Combine(output, "menu-box.png"), 3);
             foreach (Control c in items.Controls.Cast<Control>().ToArray()) c.Dispose();
@@ -398,15 +417,18 @@ internal sealed class ItemTile : SoftButton
     static readonly int LineHeight = TextRenderer.MeasureText("Ag", Theme.Label, Size.Empty, TextFormatFlags.NoPadding).Height;
     /// <summary>Drawn faded while this tile is being dragged.</summary>
     internal bool Ghost;
-    internal ItemTile() { Size = new Size(Theme.S(88), Theme.S(18) + Theme.S(32) + Theme.S(8) + LineHeight * 2); Margin = new Padding(Theme.S(2)); }
+    internal bool Selected;
+    // Buttons normally suppress double-clicks; tiles open on double-click like desktop icons.
+    internal ItemTile() : base() { SetStyle(ControlStyles.StandardClick | ControlStyles.StandardDoubleClick, true); Size = new Size(Theme.S(88), Theme.S(18) + Theme.S(32) + Theme.S(8) + LineHeight * 2); Margin = new Padding(Theme.S(2)); }
     protected override void OnPaint(PaintEventArgs e)
     {
         var back = Parent?.BackColor ?? BackColor;
         e.Graphics.Clear(back); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        if ((Hover || Focused) && !Ghost)
+        if ((Hover || Selected) && !Ghost)
         {
-            using var path = Theme.Round(new RectangleF(0, 0, Width - 1, Height - 1), Theme.S(8));
-            using var brush = new SolidBrush(Theme.Mix(back, Accent, Hover ? .16f : .1f)); e.Graphics.FillPath(brush, path);
+            using var path = Theme.Round(new RectangleF(.5f, .5f, Width - 2, Height - 2), Theme.S(8));
+            using var brush = new SolidBrush(Theme.Mix(back, Accent, Selected ? (Hover ? .3f : .25f) : .14f)); e.Graphics.FillPath(brush, path);
+            if (Selected) { using var ring = new Pen(Theme.Mix(back, Accent, .6f), Math.Max(1, Theme.Scale)); e.Graphics.DrawPath(ring, path); }
         }
         int icon = Theme.S(32), top = Theme.S(8);
         if (Image != null)
@@ -417,7 +439,7 @@ internal sealed class ItemTile : SoftButton
         }
         // Two lines at most; TextBoxControl drops a partially visible third line and EndEllipsis marks the cut.
         var text = new Rectangle(Theme.S(4), top + icon + Theme.S(6), Width - Theme.S(8), LineHeight * 2);
-        TextRenderer.DrawText(e.Graphics, Text, Theme.Label, text, Ghost ? Theme.Mix(back, Theme.Ink, .3f) : Hover ? Theme.Ink : Theme.Mix(back, Theme.Ink, .88f),
+        TextRenderer.DrawText(e.Graphics, Text, Theme.Label, text, Ghost ? Theme.Mix(back, Theme.Ink, .3f) : Hover || Selected ? Theme.Ink : Theme.Mix(back, Theme.Ink, .88f),
             TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPadding);
     }
 }
