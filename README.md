@@ -1,6 +1,6 @@
-# Desktop Boxes
+# Boxes
 
-A native Windows 11 desktop organiser using .NET 10 Windows Forms. No browser engine, network service, or third-party packages.
+A native Windows 11 desktop organiser using .NET 10 Windows Forms, inspired by Stardock Fences. No browser engine, network service, or third-party packages. Boxes never connects to the internet.
 
 ## Download
 
@@ -68,3 +68,7 @@ Verified: clean Release build/publish; UI smoke test creating a second box; plac
 Developer checks: `--smoke-test` (imports an item through the app, deletes its original, verifies retention, exercises New box, and renders normal/compact controls), `--library-tests` (file/folder/URL/Windows shortcut deletion, shortcut metadata, reload, same-name collisions, self-import and failed-copy cleanup), `--placement-tests`, `--desktop-check` (writes a snapshot beside the executable), `--scroll-check` (loads the saved boxes off-screen and prints their scroll metrics), and `--verify-layout` (checks current Explorer positions against saved boxes).
 
 Normal and compact UI layouts were rendered from the actual controls and visually inspected. Windows tool windows were not exposed by the UI inspection inventory for live screenshots. Mixed-DPI changes, Explorer restarts, and Show Desktop need broader hands-on testing. Boxes use ordinary borderless windows maintained near the desktop in the Z order, rather than an Explorer extension. Shell virtual items such as Recycle Bin cannot be dropped as file shortcuts.
+
+## License
+
+[MIT](LICENSE)
