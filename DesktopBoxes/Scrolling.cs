@@ -13,6 +13,8 @@ internal sealed class ScrollHost : Panel
     readonly ScrollThumb thumb;
     internal int Offset { get; private set; }
     internal int Max { get; private set; }
+    /// <summary>Whether the thumb is set to show (independent of the form being visible).</summary>
+    internal bool ThumbShown => thumb.Visible;
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal Color Accent { get => thumb.Accent; set { thumb.Accent = value; thumb.Invalidate(); } }
 
@@ -30,10 +32,15 @@ internal sealed class ScrollHost : Panel
     internal void Relayout()
     {
         int width = ClientSize.Width, height = ClientSize.Height; if (width <= 0 || height <= 0) return;
-        int contentHeight = Content.Controls.Count == 0 ? height : Math.Max(height, Content.GetPreferredSize(new Size(width, 0)).Height);
-        Max = contentHeight - height; Offset = Math.Clamp(Offset, 0, Max);
-        Content.Bounds = new Rectangle(0, -Offset, width, contentHeight);
-        thumb.Bounds = new Rectangle(width - S(8), 0, S(8), height); // fits inside the tile panel's right padding thumb.Visible = Max > 0; thumb.Invalidate();
+        // Lay out at the real width, then measure where the tiles actually end; GetPreferredSize overestimates and
+        // left a phantom few-pixel overflow (and a scrollbar) on boxes that fit. Hidden bottom padding alone doesn't count.
+        Content.Bounds = new Rectangle(0, -Offset, width, Math.Max(height, Content.Height)); Content.PerformLayout();
+        int tilesEnd = Content.Controls.Count == 0 ? 0 : Content.Controls.Cast<Control>().Max(c => c.Bottom + c.Margin.Bottom);
+        int overflow = tilesEnd - height;
+        Max = overflow > 0 ? overflow + Content.Padding.Bottom : 0; Offset = Math.Clamp(Offset, 0, Max);
+        Content.Bounds = new Rectangle(0, -Offset, width, height + Max);
+       thumb.Bounds = new Rectangle(width - S(8), 0, S(8), height); // fits inside the tile panel's right padding
+        thumb.Visible = Max > 0; thumb.Invalidate();
     }
     internal void ScrollTo(int value)
     {
@@ -92,7 +99,9 @@ internal sealed class ScrollThumb : Control
     protected override void OnMouseUp(MouseEventArgs e) { dragging = false; Capture = false; Invalidate(); base.OnMouseUp(e); }
     protected override void OnPaint(PaintEventArgs e)
     {
-        e.Graphics.Clear(BackColor); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        e.Graphics.Clear(BackColor);
+       if (host.Max <= 0) return; // nothing to scroll: never draw, whatever the visibility state
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         var r = ThumbRect;
         using var path = Round(new RectangleF(r.X, r.Y, r.Width, r.Height), r.Width / 2f);
         float strength = dragging ? .6f : hover ? .5f : awake ? .4f : .22f;

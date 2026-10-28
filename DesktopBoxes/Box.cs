@@ -203,6 +203,19 @@ public sealed class Box : Form
         }
         items.ResumeLayout(); scroller.Relayout(); items.Invalidate(); UpdateStatus();
     }
+    /// <summary>Dev check: builds the saved boxes off-screen (without touching the layout) and prints their scroll metrics.</summary>
+    internal static void ScrollCheck()
+    {
+        var states = System.Text.Json.JsonSerializer.Deserialize<List<State>>(File.ReadAllText(Path.Combine(Boxes.folder, "layout.json")))!;
+        var app = Boxes.Detached();
+        foreach (var s in states)
+        {
+            var box = new Box(app, s) { StartPosition = FormStartPosition.Manual, Opacity = 0 }; box.Show(); box.Location = new Point(-10000, -10000); Application.DoEvents();
+            var tiles = box.items.Controls.Cast<Control>().ToArray();
+            Console.WriteLine($"{s.Name}: box={box.Size} host={box.scroller.ClientSize} content={box.items.Bounds} max={box.scroller.Max} tiles={tiles.Length} lastBottom={(tiles.Length == 0 ? 0 : tiles.Max(t => t.Bottom))} tile={(tiles.Length == 0 ? Size.Empty : tiles[0].Size)}");
+            box.Dispose();
+        }
+    }
     internal void RenderPreview()
     {
         // Exercise both populated and compact layouts without touching the user's library.
@@ -213,13 +226,15 @@ public sealed class Box : Form
             var tile = new ItemTile { Text = sample.Item1, Accent = accent, Image = ShellImage.Load(sample.Item2) };
             tile.Disposed += (_, _) => tile.Image?.Dispose(); items.Controls.Add(tile);
         }
+        PerformLayout(); scroller.Relayout();
+        if (scroller.Max != 0 || scroller.ThumbShown) throw new InvalidOperationException($"Box whose items fit still scrolls ({scroller.Max}px) or shows a scrollbar");
         foreach (var name in new[] { "Notes", "Paint", "Calculator", "Settings", "Photos", "Clock" })
         {
             var tile = new ItemTile { Text = name, Accent = accent, Image = ShellImage.Load(Path.Combine(windows, "System32", "control.exe")) };
             tile.Disposed += (_, _) => tile.Image?.Dispose(); items.Controls.Add(tile);
         }
         PerformLayout(); LayoutChrome(); scroller.Relayout();
-        if (scroller.Max <= 0) throw new InvalidOperationException("Overflowing box did not become scrollable");
+        if (scroller.Max <= 0 || !scroller.ThumbShown) throw new InvalidOperationException("Overflowing box did not become scrollable");
         scroller.ScrollTo(int.MaxValue); if (scroller.Offset != scroller.Max || items.Top != -scroller.Max) throw new InvalidOperationException("Scrolling did not move the items");
         scroller.ScrollTo(0);
         var output = Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR");
