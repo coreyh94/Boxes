@@ -11,7 +11,7 @@ To remove Boxes, go to **Settings › Apps › Installed apps › Boxes › Unin
 
 ---
 
-A native Windows 11 desktop organiser using .NET 10 Windows Forms. No browser engine, network service, or third-party packages. Boxes never connects to the internet.
+A native Windows 11 desktop organiser using .NET 10 Windows Forms. No browser engine, network service, or third-party packages. The only internet connection Boxes makes is a once-a-day check with GitHub for a newer version, which you can turn off in **Settings…**. When one is available, the tray icon offers to install it, and your boxes and saved items are kept.
 
 ## Installing in more detail
 

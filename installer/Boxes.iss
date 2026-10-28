@@ -42,7 +42,8 @@ Name: "{autoprograms}\Boxes"; Filename: "{app}\Boxes.exe"; Comment: "Organise yo
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "DesktopBoxes"; ValueData: """{app}\Boxes.exe"""; Flags: uninsdeletevalue
 
 [Run]
-Filename: "{app}\Boxes.exe"; Description: "Start Boxes now"; Flags: postinstall nowait skipifsilent
+; Also runs for /SILENT, which the in-app updater uses, so Boxes comes back after an upgrade.
+Filename: "{app}\Boxes.exe"; Description: "Start Boxes now"; Flags: postinstall nowait
 
 [Code]
 procedure StopBoxes();

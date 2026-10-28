@@ -6,7 +6,7 @@ namespace DesktopBoxes;
 
 static class Program
 {
-    [STAThread] static void Main(string[] args) { if (args.Contains("--desktop-check")) { ApplicationConfiguration.Initialize(); using var icons = new DesktopIcons(); File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "desktop-check.json"), JsonSerializer.Serialize(new { icons.Positions, icons.Spacing, icons.Origin, icons.AnchorInset })); return; } if (args.Contains("--verify-layout")) { ApplicationConfiguration.Initialize(); using var desktop = new DesktopIcons(); var states = JsonSerializer.Deserialize<List<State>>(File.ReadAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DesktopBoxes", "layout.json")))!; var bounds = states.Select(s => new Rectangle(s.X, s.Y, s.Width, s.Height)).ToArray(); if (bounds.Any(b => desktop.Positions.Any(p => b.IntersectsWith(Placement.Cell(p, desktop.Spacing, desktop.AnchorInset))))) throw new Exception("Desktop icon overlaps a saved box"); if (bounds.Where((b, i) => bounds.Where((_, j) => j != i).Any(b.IntersectsWith)).Any()) throw new Exception("Boxes overlap"); return; } if (args.Contains("--scroll-check")) { ApplicationConfiguration.Initialize(); Box.ScrollCheck(); return; } if (args.Contains("--library-tests")) { LibraryTests.Run(); return; } if (args.Contains("--placement-tests")) { PlacementTests.Run(); return; } if (args.Length == 2 && args[0] == "--write-icon") { using var ico = File.Create(args[1]); AppIcon.WriteIco(ico); return; } using var mutex = new Mutex(true, args.Contains("--smoke-test") ? "Local\\DesktopBoxes.SmokeTest" : "Local\\DesktopBoxes", out var first); if (!first) return; ApplicationConfiguration.Initialize(); Application.Run(new Boxes(args.Contains("--smoke-test"))); }
+    [STAThread] static void Main(string[] args) { if (args.Contains("--desktop-check")) { ApplicationConfiguration.Initialize(); using var icons = new DesktopIcons(); File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "desktop-check.json"), JsonSerializer.Serialize(new { icons.Positions, icons.Spacing, icons.Origin, icons.AnchorInset })); return; } if (args.Contains("--verify-layout")) { ApplicationConfiguration.Initialize(); using var desktop = new DesktopIcons(); var states = JsonSerializer.Deserialize<List<State>>(File.ReadAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DesktopBoxes", "layout.json")))!; var bounds = states.Select(s => new Rectangle(s.X, s.Y, s.Width, s.Height)).ToArray(); if (bounds.Any(b => desktop.Positions.Any(p => b.IntersectsWith(Placement.Cell(p, desktop.Spacing, desktop.AnchorInset))))) throw new Exception("Desktop icon overlaps a saved box"); if (bounds.Where((b, i) => bounds.Where((_, j) => j != i).Any(b.IntersectsWith)).Any()) throw new Exception("Boxes overlap"); return; } if (args.Contains("--scroll-check")) { ApplicationConfiguration.Initialize(); Box.ScrollCheck(); return; } if (args.Contains("--library-tests")) { LibraryTests.Run(); return; } if (args.Contains("--placement-tests")) { PlacementTests.Run(); return; } if (args.Contains("--update-tests")) { UpdateTests.Run(); return; } if (args.Length == 2 && args[0] == "--write-icon") { using var ico = File.Create(args[1]); AppIcon.WriteIco(ico); return; } using var mutex = new Mutex(true, args.Contains("--smoke-test") ? "Local\\DesktopBoxes.SmokeTest" : "Local\\DesktopBoxes", out var first); if (!first) return; ApplicationConfiguration.Initialize(); Application.Run(new Boxes(args.Contains("--smoke-test"))); }
 }
 public class State
 {
@@ -35,6 +35,9 @@ public sealed class Boxes : ApplicationContext
     // Windows sends several display notifications while monitors come and go; act once things settle.
     readonly System.Windows.Forms.Timer displaysSettled = new() { Interval = 1500 };
     bool userHidden;
+    // First check a minute after start (the network may still be coming up at sign-in), then daily.
+    readonly System.Windows.Forms.Timer updateTimer = new() { Interval = 60_000 };
+    Updates.Release? update; bool installing;
     readonly string file = Path.Combine(folder, "layout.json");
     /// <summary>Owner for dev checks: no tray, no timers, never saves.</summary>
     Boxes(string libraryRoot) { smokeMode = true; Library = new ItemLibrary(libraryRoot); tray = new NotifyIcon(); }
@@ -138,6 +141,8 @@ public sealed class Boxes : ApplicationContext
         Settings = AppSettings.Load(); Startup.Sync(Settings.StartWithWindows);
         tray = new NotifyIcon { Icon = AppIcon.Create(SystemInformation.SmallIconSize), Text = "Boxes", Visible = true, ContextMenuStrip = TrayMenu() };
         tray.DoubleClick += (_, _) => Add();
+        tray.BalloonTipClicked += (_, _) => InstallUpdate();
+        updateTimer.Tick += async (_, _) => { updateTimer.Interval = 24 * 60 * 60 * 1000; await CheckForUpdateAsync(); }; updateTimer.Start();
         if (File.Exists(file)) try { foreach (var s in JsonSerializer.Deserialize<List<State>>(File.ReadAllText(file)) ?? []) Add(s); } catch (JsonException) { File.Copy(file, file + ".invalid-" + DateTime.Now.Ticks); }
         if (Windows.Count == 0) Add();
         FitToScreens(); ready = true; Save(); ProtectIcons();
@@ -167,6 +172,20 @@ public sealed class Boxes : ApplicationContext
         if (pinAttempts > 80 || string.Equals(Settings.TrayPinnedFor, Application.ExecutablePath, StringComparison.OrdinalIgnoreCase)) return;
         pinAttempts++; if (TrayPin.Set(true)) { Settings.TrayPinnedFor = Application.ExecutablePath; Settings.Save(); }
     }
+    internal async Task CheckForUpdateAsync()
+    {
+        if (!Settings.CheckForUpdates || await Updates.CheckAsync() is not { } found || found.Version == update?.Version) return;
+        update = found;
+        tray.ShowBalloonTip(15000, $"Boxes {found.Version} is available", Updates.Installed ? "Click to install it. Your boxes and saved items are kept." : "Click to download it from GitHub.", ToolTipIcon.Info);
+    }
+    void InstallUpdate() { if (update is { } release && !installing) _ = InstallUpdateAsync(release); }
+    async Task InstallUpdateAsync(Updates.Release release)
+    {
+        installing = true; if (Updates.Installed) Status($"Downloading Boxes {release.Version}…");
+        try { await Updates.InstallAsync(release); }
+        catch (Exception e) when (e is HttpRequestException or IOException or TaskCanceledException or UnauthorizedAccessException or System.ComponentModel.Win32Exception) { Status("Update failed: " + e.Message); }
+        finally { installing = false; }
+    }
     internal ContextMenuStrip TrayMenu()
     {
         var menu = Menus.Create(Color.FromArgb(255, Color.FromArgb(0x739FF4)));
@@ -176,8 +195,10 @@ public sealed class Boxes : ApplicationContext
             if (userHidden) foreach (var b in Windows) b.Hide();
             else { FitToScreens(); ProtectIcons(); }
         });
+        var install = Menus.Item("Install update", Menus.Icons.Update, InstallUpdate); install.Visible = false;
         menu.Opening += (_, _) =>
         {
+            install.Visible = update != null; if (update != null) install.Text = Updates.Installed ? $"Install Boxes {update.Version}" : $"Get Boxes {update.Version}…";
             bool shown = Windows.Any(b => b.Visible);
             toggle.Text = shown ? "Hide boxes" : "Show boxes"; toggle.Image?.Dispose(); toggle.Image = Menus.Glyph(shown ? Menus.Icons.Hide : Menus.Icons.Show, Theme.Muted);
         };
@@ -188,7 +209,7 @@ public sealed class Boxes : ApplicationContext
             Menus.Item("New photo box…", Menus.Icons.Photo, () => _ = AddPhotoBoxAsync()),
             Menus.Item("New slideshow box…", Menus.Icons.Slideshow, () => AddSlideshowBox()), toggle,
             Menus.Item("Saved items", Menus.Icons.Folder, () => { Directory.CreateDirectory(Library.Root); Process.Start(new ProcessStartInfo(Library.Root) { UseShellExecute = true }); }),
-            Menus.Item("Settings…", Menus.Icons.Settings, () => SettingsWindow.Open(this)),
+            Menus.Item("Settings…", Menus.Icons.Settings, () => SettingsWindow.Open(this)), install,
             Menus.Separator(),
             Menus.Item("Exit", Menus.Icons.Exit, RequestExit), Menus.Spacer()]);
         return menu;
@@ -337,5 +358,5 @@ public sealed class Boxes : ApplicationContext
         }
         finally { Busy = false; if (exitPending) ExitThread(); }
     }
-    protected override void ExitThreadCore() { SystemEvents.DisplaySettingsChanged -= DisplaysChanged; displaysSettled.Dispose(); if (Windows.Count > 0) Save(); timer.Dispose(); tray.Dispose(); foreach (var b in Windows.ToArray()) b.Dispose(); base.ExitThreadCore(); }
+    protected override void ExitThreadCore() { SystemEvents.DisplaySettingsChanged -= DisplaysChanged; displaysSettled.Dispose(); updateTimer.Dispose(); if (Windows.Count > 0) Save(); timer.Dispose(); tray.Dispose(); foreach (var b in Windows.ToArray()) b.Dispose(); base.ExitThreadCore(); }
 }

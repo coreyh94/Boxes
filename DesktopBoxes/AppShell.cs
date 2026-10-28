@@ -6,10 +6,11 @@ using Microsoft.Win32;
 
 namespace DesktopBoxes;
 
-/// <summary>App-wide preferences, separate from the box layout. Missing file means defaults (startup on).</summary>
+/// <summary>App-wide preferences, separate from the box layout. Missing file means defaults (startup and update checks on).</summary>
 public sealed class AppSettings
 {
     public bool StartWithWindows { get; set; } = true;
+    public bool CheckForUpdates { get; set; } = true;
     /// <summary>Executable path whose tray icon has already been pinned once; later user choices are left alone.</summary>
     public string? TrayPinnedFor { get; set; }
     static string File => Path.Combine(Boxes.folder, "settings.json");
@@ -113,7 +114,7 @@ internal sealed class SettingsWindow : Form
     SettingsWindow(Boxes app)
     {
         Text = "Boxes settings"; Icon = AppIcon.Create(new Size(Theme.S(32), Theme.S(32))); FormBorderStyle = FormBorderStyle.FixedSingle; MaximizeBox = MinimizeBox = false;
-        StartPosition = FormStartPosition.CenterScreen; AutoScaleMode = AutoScaleMode.None; ClientSize = new Size(Theme.S(420), Theme.S(236));
+        StartPosition = FormStartPosition.CenterScreen; AutoScaleMode = AutoScaleMode.None; ClientSize = new Size(Theme.S(420), Theme.S(296));
         BackColor = Color.FromArgb(21, 25, 34); ForeColor = Theme.Ink; Font = Theme.Body; TopMost = true;
         var heading = new Label { Text = "Settings", Font = Theme.Title, ForeColor = Theme.Ink, Location = new Point(Theme.S(22), Theme.S(18)), AutoSize = true };
         var startup = Option("Start Boxes with Windows", "Opens quietly in the tray when you sign in.", Theme.S(62), Startup.Enabled);
@@ -121,6 +122,8 @@ internal sealed class SettingsWindow : Form
         var pinned = TrayPin.Pinned;
         var pin = Option("Show icon next to the clock", pinned == null ? "Available once Windows has registered the tray icon." : "Otherwise it sits under the ^ overflow arrow.", Theme.S(122), pinned == true);
         pin.Enabled = pinned != null; pin.CheckedChanged += (_, _) => TrayPin.Set(pin.Checked);
+        var updates = Option("Check for updates", "Asks GitHub for the latest version once a day.", Theme.S(182), app.Settings.CheckForUpdates);
+        updates.CheckedChanged += (_, _) => { app.Settings.CheckForUpdates = updates.Checked; app.Settings.Save(); if (updates.Checked) _ = app.CheckForUpdateAsync(); };
         var done = new SoftButton { Text = "Done", Size = new Size(Theme.S(92), Theme.S(32)), Location = new Point(ClientSize.Width - Theme.S(114), ClientSize.Height - Theme.S(50)), Accent = Color.FromArgb(255, Color.FromArgb(0x739FF4)) };
         done.Click += (_, _) => Close(); AcceptButton = CancelButton = done;
         Controls.AddRange([heading, done]);
