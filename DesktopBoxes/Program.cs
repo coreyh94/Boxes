@@ -15,6 +15,8 @@ public class State
     public int Width { get; set; } = 384; public int Height { get; set; } = 288;
     public int Colour { get; set; } = Color.SteelBlue.ToArgb();
     public List<string> Items { get; set; } = [];
+    /// <summary>Saved copy of the photo for a photo box; null for an ordinary item box.</summary>
+    public string? Photo { get; set; }
 }
 public sealed class Boxes : ApplicationContext
 {
@@ -61,6 +63,20 @@ public sealed class Boxes : ApplicationContext
                     other.State.Items.AddRange(["b", "c"]); MoveItem(other, saved, other, 3);
                     if (!other.State.Items.SequenceEqual(["b", "c", saved])) throw new InvalidOperationException("Reorder within a box failed: " + string.Join(",", other.State.Items));
                     other.State.Items.RemoveAll(i => i is "b" or "c"); MoveItem(other, saved, test, 0);
+                    // Photo box: saved as an independent copy, sized to the photo's shape, and shown instead of items.
+                    var wallpaper = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Web", "Wallpaper", "Windows", "img0.jpg");
+                    var photoSource = Path.Combine(Path.GetTempPath(), "Boxes-SmokePhoto-" + Guid.NewGuid().ToString("N") + (File.Exists(wallpaper) ? ".jpg" : ".png"));
+                    if (File.Exists(wallpaper)) File.Copy(wallpaper, photoSource);
+                    else { using var generated = new Bitmap(640, 400); using (var g = Graphics.FromImage(generated)) g.Clear(Color.Teal); generated.Save(photoSource); }
+                    try
+                    {
+                        await AddPhotoBoxAsync(photoSource);
+                        var photoBox = Windows.Last(); File.Delete(photoSource);
+                        if (photoBox.State.Photo is not { } kept || !Library.Contains(kept) || !File.Exists(kept) || !photoBox.PhotoShown) throw new InvalidOperationException("Photo box was not created from a saved copy");
+                        if (photoBox.Width <= photoBox.Height || photoBox.Width % 48 != 0 || photoBox.Height % 48 != 0) throw new InvalidOperationException($"Landscape photo box badly sized: {photoBox.Size}");
+                        if (Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR") is { } photoPreview) { photoBox.State.Name = "Weekend"; photoBox.RenderPhotoPreview(Path.Combine(photoPreview, "box-photo.png")); }
+                    }
+                    finally { File.Delete(photoSource); }
                     test.State.Items.Clear(); test.RefreshItems(); test.RenderPreview();
                     if (Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR") is { } previews) { SettingsWindow.RenderPreview(this, previews); using var trayMenu = TrayMenu(); Menus.RenderPreview(trayMenu, Path.Combine(previews, "menu-tray.png"), 3); }
                     Console.WriteLine("Smoke test passed");
@@ -131,7 +147,8 @@ public sealed class Boxes : ApplicationContext
         menu.Items.AddRange([
             Menus.Spacer(), new MenuHeader(() => { int items = Windows.Sum(b => b.State.Items.Count); return $"{Windows.Count} box{(Windows.Count == 1 ? "" : "es")} · {items} item{(items == 1 ? "" : "s")}"; }),
             Menus.Separator(),
-            Menus.Item("New box", Menus.Icons.Add, () => Add()), toggle,
+            Menus.Item("New box", Menus.Icons.Add, () => Add()),
+            Menus.Item("New photo box…", Menus.Icons.Photo, () => _ = AddPhotoBoxAsync()), toggle,
             Menus.Item("Saved items", Menus.Icons.Folder, () => { Directory.CreateDirectory(Library.Root); Process.Start(new ProcessStartInfo(Library.Root) { UseShellExecute = true }); }),
             Menus.Item("Settings…", Menus.Icons.Settings, () => SettingsWindow.Open(this)),
             Menus.Separator(),
@@ -191,6 +208,40 @@ public sealed class Boxes : ApplicationContext
     }
     internal void Save() { if (smokeMode) return; File.WriteAllText(file + ".tmp", JsonSerializer.Serialize(Windows.Select(b => b.State), new JsonSerializerOptions { WriteIndented = true })); File.Move(file + ".tmp", file, true); }
     internal void RequestExit() { if (Busy) { exitPending = true; Status("Finishing saving items before exit"); } else ExitThread(); }
+    internal static readonly string[] PhotoExtensions = [".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff"];
+    internal static bool IsPhoto(string path) => PhotoExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+    static string? PickPhoto()
+    {
+        using var dialog = new OpenFileDialog { Title = "Choose a photo", Filter = "Photos|" + string.Join(";", PhotoExtensions.Select(e => "*" + e)), InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures) };
+        return dialog.ShowDialog() == DialogResult.OK ? dialog.FileName : null;
+    }
+    /// <summary>Copies a photo into the library (same independent-copy rule as items). Null if it couldn't be saved.</summary>
+    async Task<string?> SavePhotoAsync(string source, Box? box)
+    {
+        if (Busy) return null;
+        Busy = true; box?.SetMessage("Saving your photo…");
+        try { var stored = await Library.ImportAsync(source); box?.SetMessage(null); return stored; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Status("Could not save photo: " + e.Message); box?.SetMessage("Couldn't save that photo — original kept"); return null; }
+        finally { Busy = false; if (exitPending) ExitThread(); }
+    }
+    /// <summary>New box showing one photo, sized to the photo's shape and placed in free grid space.</summary>
+    internal async Task AddPhotoBoxAsync(string? source = null)
+    {
+        source ??= PickPhoto(); if (source == null) return;
+        if (!IsPhoto(source)) { Status("Choose a JPG, PNG, BMP, GIF or TIFF photo"); return; }
+        var stored = await SavePhotoAsync(source, null); if (stored == null || exitPending) return;
+        var size = PhotoPanel.BoxSizeFor(stored, Screen.PrimaryScreen?.WorkingArea.Size ?? new Size(1920, 1032));
+        var slot = Placement.FindBox(size, [.. Windows.Select(b => b.Bounds)], [.. Screen.AllScreens.Select(s => s.WorkingArea)]);
+        if (slot == null) { Status("No free space for a new photo box"); return; }
+        Add(new State { Name = Path.GetFileNameWithoutExtension(source), X = slot.Value.X, Y = slot.Value.Y, Width = size.Width, Height = size.Height, Photo = stored, Colour = SwatchRow.Palette[5].Colour.ToArgb() });
+    }
+    internal async Task ChangePhotoAsync(Box box, string? source = null)
+    {
+        source ??= PickPhoto(); if (source == null) return;
+        if (!IsPhoto(source)) { box.SetMessage("That isn't a photo Boxes can show"); return; }
+        if (await SavePhotoAsync(source, box) is not { } stored) return;
+        box.State.Photo = stored; box.ShowPhoto(); Save();
+    }
     internal async Task ImportItemsAsync(Box box, string[] paths)
     {
         if (Busy) return;

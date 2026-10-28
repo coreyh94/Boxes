@@ -36,6 +36,8 @@ public sealed class Box : Form
     internal Rectangle Home => new(State.X, State.Y, State.Width, State.Height);
     readonly TilePanel items = new() { Padding = new Padding(Theme.S(8), 0, Theme.S(8), Theme.S(10)) };
     readonly ScrollHost scroller;
+    /// <summary>Shown instead of the items when this is a photo box.</summary>
+    readonly PhotoPanel photo = new() { Dock = DockStyle.Fill, Visible = false };
     readonly Panel header = new() { Dock = DockStyle.Top, Height = Theme.S(48), Cursor = Cursors.SizeAll };
     readonly TextBox title = new() { BorderStyle = BorderStyle.None, ForeColor = Theme.Ink, Font = Theme.Title };
     readonly GhostButton options = new() { Glyph = '', AccessibleName = "Box options" };
@@ -62,7 +64,7 @@ public sealed class Box : Form
         DoubleBuffered = true; Font = Theme.Body;
         Bounds = Home; // Boxes.FitToScreens relocates it if this spot is off the current monitors.
         scroller = new ScrollHost(items) { Dock = DockStyle.Fill };
-        Controls.Add(scroller); Controls.Add(header); Controls.Add(grip); Controls.Add(status);
+        Controls.Add(scroller); Controls.Add(photo); Controls.Add(header); Controls.Add(grip); Controls.Add(status);
         grip.BringToFront(); status.BringToFront();
         header.Controls.AddRange([title, options]);
         title.Text = state.Name; title.AccessibleName = "Box title";
@@ -72,10 +74,13 @@ public sealed class Box : Form
         tips.SetToolTip(options, "Colours and box options");
         tips.SetToolTip(header, "Drag to move · boxes snap to the grid");
         swatches.Picked += colour => { State.Colour = colour.ToArgb(); Recolour(); owner.Save(); };
-        menu.Opening += (_, _) => swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour));
+        var changePhoto = Menus.Item("Change photo…", Menus.Icons.Photo, () => _ = owner.ChangePhotoAsync(this));
+        menu.Opening += (_, _) => { swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour)); changePhoto.Visible = State.Photo != null; };
         menu.Items.AddRange([
             Menus.Spacer(), swatches, Menus.Separator(),
+            changePhoto,
             Menus.Item("New box", Menus.Icons.Add, () => owner.Add()),
+            Menus.Item("New photo box…", Menus.Icons.Photo, () => _ = owner.AddPhotoBoxAsync()),
             Menus.Item("Rename", Menus.Icons.Rename, () => { title.Focus(); title.SelectAll(); }),
             Menus.Item("Open saved items", Menus.Icons.Folder, () => { Directory.CreateDirectory(owner.Library.Root); Process.Start(new ProcessStartInfo(owner.Library.Root) { UseShellExecute = true }); }),
             Menus.Item("Settings…", Menus.Icons.Settings, () => SettingsWindow.Open(owner)),
@@ -85,7 +90,13 @@ public sealed class Box : Form
                 if (owner.Busy) { SetMessage("Let your items finish saving first"); return; }
                 owner.Windows.Remove(this); owner.Save(); Close();
             }, danger: true), Menus.Spacer()]);
-        foreach (var c in new Control[] { this, header, scroller, items, grip }) c.ContextMenuStrip = menu;
+        foreach (var c in new Control[] { this, header, scroller, items, grip, photo }) c.ContextMenuStrip = menu;
+        photo.MouseDoubleClick += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Left || State.Photo == null) return;
+            try { Process.Start(new ProcessStartInfo(State.Photo) { UseShellExecute = true }); }
+            catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException) { SetMessage("Couldn't open this photo."); }
+        };
         foreach (var c in new Control[] { header })
         {
             c.MouseDown += (_, e) =>
@@ -106,11 +117,11 @@ public sealed class Box : Form
             if (e.Button != MouseButtons.Left) return;
             Moving = true; Native.ReleaseCapture(); Native.SendMessage(Handle, 0xA1, 17, 0); Snap(); Moving = false;
         };
-        foreach (var c in new Control[] { this, scroller, items, header }) EnableDrop(c);
+        foreach (var c in new Control[] { this, scroller, items, header, photo }) EnableDrop(c);
         // Clicking empty space in the box, or anywhere outside it, clears the selection.
         items.MouseDown += (_, _) => { if (SelectedTile != null) Select(null); };
         Deactivate += (_, _) => { if (SelectedTile != null) Select(null); };
-        Recolour(); RefreshItems(); LayoutChrome();
+        Recolour(); RefreshItems(); ShowPhoto(); LayoutChrome();
     }
 
     /// <summary>The tile being dragged between/within boxes. Kept in-process; the drag data only carries a marker
@@ -128,14 +139,16 @@ public sealed class Box : Form
         {
             var index = InsertIndex(new Point(e.X, e.Y)); EndDragFeedback();
             // Deferred: the source tile is still inside its DoDragDrop loop, and the move rebuilds (disposes) tiles.
-            if (e.Data?.GetDataPresent(TileFormat) == true && tileDrag is { } drag) BeginInvoke(() => owner.MoveItem(drag.From, drag.Path, this, index));
+            if (State.Photo != null) { if (DroppedPhoto(e) is { } image) await owner.ChangePhotoAsync(this, image); }
+            else if (e.Data?.GetDataPresent(TileFormat) == true && tileDrag is { } drag) BeginInvoke(() => owner.MoveItem(drag.From, drag.Path, this, index));
             else if (e.Data?.GetData(DataFormats.FileDrop) is string[] paths) await owner.ImportItemsAsync(this, paths);
         };
     }
     void DragUpdate(DragEventArgs e)
     {
-        bool tile = e.Data?.GetDataPresent(TileFormat) == true && tileDrag != null;
-        bool files = !tile && e.Data?.GetDataPresent(DataFormats.FileDrop) == true && (e.AllowedEffect & DragDropEffects.Copy) != 0;
+        bool tile = State.Photo == null && e.Data?.GetDataPresent(TileFormat) == true && tileDrag != null;
+        bool files = !tile && e.Data?.GetDataPresent(DataFormats.FileDrop) == true && (e.AllowedEffect & DragDropEffects.Copy) != 0
+            && (State.Photo == null || DroppedPhoto(e) != null); // photo boxes take a single photo, which replaces theirs
         e.Effect = owner.Busy ? DragDropEffects.None : tile ? DragDropEffects.Move : files ? DragDropEffects.Copy : DragDropEffects.None;
         if (e.Effect == DragDropEffects.None) { EndDragFeedback(); return; }
         if (!draggingOver) { draggingOver = true; ApplyBorder(); Invalidate(); }
@@ -145,6 +158,16 @@ public sealed class Box : Form
         var local = scroller.PointToClient(screen); int edge = Theme.S(36);
         if (local.Y < edge) scroller.ScrollTo(scroller.Offset - Theme.S(14));
         else if (local.Y > scroller.ClientSize.Height - edge) scroller.ScrollTo(scroller.Offset + Theme.S(14));
+    }
+    internal void RenderPhotoPreview(string file) { title.Text = State.Name; PerformLayout(); using var bmp = new Bitmap(Width, Height); DrawToBitmap(bmp, ClientRectangle); bmp.Save(file); }
+    internal bool PhotoShown => photo.Visible && photo.HasPhoto && !scroller.Visible;
+    static string? DroppedPhoto(DragEventArgs e) => e.Data?.GetData(DataFormats.FileDrop) is string[] { Length: 1 } paths && Boxes.IsPhoto(paths[0]) ? paths[0] : null;
+    /// <summary>Switches between the item grid and the photo, depending on State.Photo.</summary>
+    internal void ShowPhoto()
+    {
+        bool on = State.Photo != null;
+        photo.Load(State.Photo); photo.Visible = on; scroller.Visible = !on;
+        if (on) items.ShowMarker(null);
     }
     void EndDragFeedback() { items.ShowMarker(null); if (!draggingOver) return; draggingOver = false; ApplyBorder(); Invalidate(); }
     /// <summary>Slot a drop at this screen point would take, reading tiles left-to-right, top-to-bottom.</summary>
@@ -210,7 +233,7 @@ public sealed class Box : Form
     {
         accent = Theme.Mix(Color.FromArgb(State.Colour), Color.White, .15f);
         BackColor = Theme.Mix(Theme.Card, accent, .07f);
-        header.BackColor = title.BackColor = scroller.BackColor = items.BackColor = status.BackColor = grip.BackColor = options.BackColor = BackColor;
+        header.BackColor = title.BackColor = scroller.BackColor = items.BackColor = status.BackColor = grip.BackColor = options.BackColor = photo.BackColor = BackColor; photo.Accent = accent; photo.Invalidate();
         items.Accent = options.Accent = grip.Accent = scroller.Accent = accent;
         foreach (var tile in items.Controls.OfType<ItemTile>()) { tile.Accent = accent; if (tile.ContextMenuStrip != null) Menus.SetAccent(tile.ContextMenuStrip, accent); }
         Menus.SetAccent(menu, accent); ApplyBorder();
