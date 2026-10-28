@@ -240,6 +240,9 @@ internal sealed class TilePanel : FlowLayoutPanel
 {
     internal Color Accent;
     internal TilePanel() { DoubleBuffered = true; }
+    [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)] static extern int SetWindowTheme(nint hwnd, string app, string? idList);
+    // Windows 10 1809+ / 11: thin dark scrollbar that expands on hover, instead of the light classic one.
+    protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); SetWindowTheme(Handle, "DarkMode_Explorer", null); }
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e); if (Controls.Count != 0) return;
