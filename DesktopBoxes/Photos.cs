@@ -65,7 +65,9 @@ internal sealed class PhotoPanel : Control
         static int Snap(int v, int min) => Math.Max(min, (int)Math.Round(v / 48d) * 48);
         return new Size(Snap(width, 240), Snap(height, 192));
     }
-    Rectangle Frame => new(S(10), 0, Math.Max(1, Width - S(20)), Math.Max(1, Height - S(10)));
+    /// <summary>Gap above the photo; only needed when the box's title bar is hidden.</summary>
+    internal int TopInset;
+    Rectangle Frame => new(S(10), TopInset, Math.Max(1, Width - S(20)), Math.Max(1, Height - TopInset - S(10)));
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics; g.Clear(BackColor); g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -115,6 +117,9 @@ internal sealed class PhotoReel : IDisposable
         timer = new() { Interval = Math.Max(3, seconds) * 1000 };
         timer.Tick += async (_, _) => await NextAsync();
     }
+    /// <summary>Changing the interval restarts the countdown, so the current photo gets the full new time.</summary>
+    internal void SetInterval(int seconds) => timer.Interval = Math.Max(3, seconds) * 1000;
+    internal int IntervalSeconds => timer.Interval / 1000;
     internal async Task StartAsync() { panel.Placeholder = "Loading photos…"; panel.Invalidate(); await NextAsync(); if (!disposed) timer.Start(); }
     /// <summary>Shows the next photo. Skips work while the box is hidden, unless nothing has been shown yet.</summary>
     internal async Task NextAsync()

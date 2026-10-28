@@ -45,6 +45,22 @@ internal static class Menus
         menu.Opacity = 0; menu.Show(Point.Empty); Application.DoEvents(); if (hovered >= 0) menu.Items[hovered].Select();
         using var bmp = new Bitmap(menu.Width, menu.Height); menu.DrawToBitmap(bmp, new Rectangle(Point.Empty, menu.Size)); bmp.Save(file); menu.Close(); menu.Opacity = 1;
     }
+    /// <summary>Item that opens a styled dropdown of choices; the chosen one shows a tick (see <see cref="Tick"/>).</summary>
+    internal static ToolStripMenuItem Submenu(string text, char glyph, params (string Text, Action Click)[] choices)
+    {
+        var item = Item(text, glyph, () => { });
+        var drop = Create(Color.SteelBlue); item.DropDown = drop; item.Disposed += (_, _) => drop.Dispose();
+        drop.Items.Add(Spacer());
+        foreach (var (choice, click) in choices) drop.Items.Add(Item(choice, Icons.Check, click));
+        drop.Items.Add(Spacer());
+        return item;
+    }
+    /// <summary>Ticks the choice matching <paramref name="index"/>; the others keep their glyph space so text stays aligned.</summary>
+    internal static void Tick(ToolStripMenuItem submenu, int index)
+    {
+        var choices = submenu.DropDownItems.OfType<ToolStripMenuItem>().ToArray();
+        for (int i = 0; i < choices.Length; i++) choices[i].DisplayStyle = i == index ? ToolStripItemDisplayStyle.ImageAndText : ToolStripItemDisplayStyle.Text;
+    }
     internal static ToolStripSeparator Separator() => new() { AutoSize = false, Height = S(11) };
     /// <summary>Breathing room at the top and bottom; the dropdown overrides its own vertical padding.</summary>
     internal static ToolStripSeparator Spacer() => new() { AutoSize = false, Height = S(4) };
@@ -65,6 +81,7 @@ internal static class Menus
     /// <summary>Segoe Fluent Icons code points used by the menus.</summary>
     internal static class Icons
     {
+        internal const char Timer = '', Check = '';
         internal const char Add = '', Show = '', Hide = '', Folder = '', Settings = '', Exit = '';
         internal const char Rename = '', Delete = '', Open = '', Reveal = '', Remove = '', More = '', Photo = '', Slideshow = '', Next = '';
     }

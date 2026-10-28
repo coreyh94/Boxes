@@ -68,7 +68,8 @@ public sealed class Box : Form
         grip.BringToFront(); status.BringToFront();
         header.Controls.AddRange([title, options]);
         title.Text = state.Name; title.AccessibleName = "Box title";
-        title.Leave += (_, _) => { State.Name = title.Text; Text = title.Text; owner.Save(); };
+        // Saved as you type (hooked after the initial text), so an edit survives exiting while the title still has focus.
+        title.TextChanged += (_, _) => { if (title.Text == State.Name) return; State.Name = title.Text; Text = title.Text; owner.Save(); };
         title.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { items.Focus(); e.SuppressKeyPress = true; } };
         options.Click += (_, _) => menu.Show(options, new Point(options.Width - menu.Width, options.Height + Theme.S(6)));
         tips.SetToolTip(options, "Colours and box options");
@@ -77,18 +78,24 @@ public sealed class Box : Form
         var changePhoto = Menus.Item("Change photo…", Menus.Icons.Photo, () => _ = owner.ChangePhotoAsync(this));
         var nextPhoto = Menus.Item("Next photo", Menus.Icons.Next, () => _ = reel?.NextAsync());
         var changeFolder = Menus.Item("Change folder…", Menus.Icons.Folder, () => owner.ChangeFolder(this));
+        interval = Menus.Submenu("Change photo every", Menus.Icons.Timer, [.. Intervals.Select(i => (i.Label, (Action)(() => SetInterval(i.Seconds))))]);
+        var titleBar = Menus.Item("Hide title bar", Menus.Icons.Hide, () => SetTitleHidden(!State.HideTitle));
+        var rename = Menus.Item("Rename", Menus.Icons.Rename, () => { title.Focus(); title.SelectAll(); });
         menu.Opening += (_, _) =>
         {
             swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour));
-            changePhoto.Visible = State.Photo != null; nextPhoto.Visible = changeFolder.Visible = State.PhotoFolder != null;
+            changePhoto.Visible = State.Photo != null; nextPhoto.Visible = changeFolder.Visible = interval.Visible = State.PhotoFolder != null;
+            Menus.Tick(interval, Array.FindIndex(Intervals, i => i.Seconds == State.SlideSeconds));
+            titleBar.Text = State.HideTitle ? "Show title bar" : "Hide title bar"; rename.Visible = !State.HideTitle;
+            titleBar.Image?.Dispose(); titleBar.Image = Menus.Glyph(State.HideTitle ? Menus.Icons.Show : Menus.Icons.Hide, Theme.Muted);
         };
         menu.Items.AddRange([
             Menus.Spacer(), swatches, Menus.Separator(),
-            changePhoto, nextPhoto, changeFolder,
+            changePhoto, nextPhoto, changeFolder, interval, titleBar,
             Menus.Item("New box", Menus.Icons.Add, () => owner.Add()),
             Menus.Item("New photo box…", Menus.Icons.Photo, () => _ = owner.AddPhotoBoxAsync()),
             Menus.Item("New slideshow box…", Menus.Icons.Slideshow, () => owner.AddSlideshowBox()),
-            Menus.Item("Rename", Menus.Icons.Rename, () => { title.Focus(); title.SelectAll(); }),
+            rename,
             Menus.Item("Open saved items", Menus.Icons.Folder, () => { Directory.CreateDirectory(owner.Library.Root); Process.Start(new ProcessStartInfo(owner.Library.Root) { UseShellExecute = true }); }),
             Menus.Item("Settings…", Menus.Icons.Settings, () => SettingsWindow.Open(owner)),
             Menus.Separator(),
@@ -104,21 +111,10 @@ public sealed class Box : Form
             try { Process.Start(new ProcessStartInfo(shown) { UseShellExecute = true }); }
             catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException) { SetMessage("Couldn't open this photo."); }
         };
-        foreach (var c in new Control[] { header })
-        {
-            c.MouseDown += (_, e) =>
-            {
-                if (e.Button != MouseButtons.Left) return;
-                Moving = true; drag = PointToClient(c.PointToScreen(e.Location)); c.Capture = true;
-                grid = new Grid(Screen.FromControl(this).WorkingArea); grid.Show();
-            };
-            c.MouseMove += (_, e) =>
-            {
-                if (!Moving || !c.Capture) return;
-                var p = c.PointToScreen(e.Location); Location = new Point(p.X - drag.X, p.Y - drag.Y);
-            };
-            c.MouseUp += (_, _) => { if (!Moving) return; c.Capture = false; grid?.Close(); grid = null; Snap(); Moving = false; };
-        }
+        EnableMove(header, () => true, immediate: true);
+        // Without a title bar, the photo or the empty space between tiles moves the box; a small threshold keeps double-click working.
+        EnableMove(photo, () => State.HideTitle, immediate: false);
+        EnableMove(items, () => State.HideTitle, immediate: false);
         grip.MouseDown += (_, e) =>
         {
             if (e.Button != MouseButtons.Left) return;
@@ -129,6 +125,40 @@ public sealed class Box : Form
         items.MouseDown += (_, _) => { if (SelectedTile != null) Select(null); };
         Deactivate += (_, _) => { if (SelectedTile != null) Select(null); };
         Recolour(); RefreshItems(); ShowPhoto(); LayoutChrome();
+    }
+
+    void EnableMove(Control c, Func<bool> active, bool immediate)
+    {
+        Point? press = null;
+        void Begin(Point at) { Moving = true; drag = PointToClient(c.PointToScreen(at)); c.Capture = true; grid = new Grid(Screen.FromControl(this).WorkingArea); grid.Show(); }
+        c.MouseDown += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Left || !active()) return;
+            if (immediate) Begin(e.Location); else press = e.Location;
+        };
+        c.MouseMove += (_, e) =>
+        {
+            if (press is { } start && e.Button == MouseButtons.Left)
+            {
+                var size = SystemInformation.DragSize;
+                if (Math.Abs(e.X - start.X) < size.Width && Math.Abs(e.Y - start.Y) < size.Height) return;
+                press = null; Begin(start);
+            }
+            if (!Moving || !c.Capture) return;
+            var p = c.PointToScreen(e.Location); Location = new Point(p.X - drag.X, p.Y - drag.Y);
+        };
+        c.MouseUp += (_, _) => { press = null; if (!Moving) return; c.Capture = false; grid?.Close(); grid = null; Snap(); Moving = false; };
+    }
+    static readonly (int Seconds, string Label)[] Intervals = [(10, "10 seconds"), (20, "20 seconds"), (60, "1 minute"), (300, "5 minutes")];
+    readonly ToolStripMenuItem interval;
+    internal void SetInterval(int seconds) { State.SlideSeconds = seconds; reel?.SetInterval(seconds); owner.Save(); }
+    internal void SetTitleHidden(bool hidden) { State.HideTitle = hidden; LayoutChrome(); owner.Save(); }
+    internal bool TitleShown => header.Visible;
+    /// <summary>Renders the box menu with its interval submenu open, highlighting the parent item.</summary>
+    internal void RenderMenuPreview(string file)
+    {
+        Menus.RenderPreview(menu, file, menu.Items.IndexOf(interval));
+        Menus.RenderPreview((ContextMenuStrip)interval.DropDown, Path.ChangeExtension(file, null) + "-interval.png", 1);
     }
 
     /// <summary>The tile being dragged between/within boxes. Kept in-process; the drag data only carries a marker
@@ -231,6 +261,7 @@ public sealed class Box : Form
     void LayoutChrome()
     {
         int pad = Theme.S(16), button = Theme.S(30);
+        header.Visible = !State.HideTitle; photo.TopInset = State.HideTitle ? Theme.S(10) : 0; photo.Invalidate();
         options.Bounds = new Rectangle(header.Width - Theme.S(10) - button, (header.Height - button) / 2 + Theme.S(2), button, button);
         int titleHeight = title.PreferredHeight;
         title.Bounds = new Rectangle(pad, (header.Height - titleHeight) / 2 + Theme.S(2), Math.Max(Theme.S(40), options.Left - pad - Theme.S(8)), titleHeight);
@@ -251,7 +282,7 @@ public sealed class Box : Form
         header.BackColor = title.BackColor = scroller.BackColor = items.BackColor = status.BackColor = grip.BackColor = options.BackColor = photo.BackColor = BackColor; photo.Accent = accent; photo.Invalidate();
         items.Accent = options.Accent = grip.Accent = scroller.Accent = accent;
         foreach (var tile in items.Controls.OfType<ItemTile>()) { tile.Accent = accent; if (tile.ContextMenuStrip != null) Menus.SetAccent(tile.ContextMenuStrip, accent); }
-        Menus.SetAccent(menu, accent); ApplyBorder();
+        Menus.SetAccent(menu, accent); Menus.SetAccent((ContextMenuStrip)interval.DropDown, accent); ApplyBorder();
         Invalidate(true);
     }
     internal void SetMessage(string? text) { message = text; UpdateStatus(); }

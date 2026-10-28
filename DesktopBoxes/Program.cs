@@ -20,6 +20,8 @@ public class State
     /// <summary>Folder a slideshow box cycles through (read live, not copied); null otherwise.</summary>
     public string? PhotoFolder { get; set; }
     public int SlideSeconds { get; set; } = 20;
+    /// <summary>Hides the header (title and ⋯ button); the box then moves by dragging its body, and right-click opens the menu.</summary>
+    public bool HideTitle { get; set; }
 }
 public sealed class Boxes : ApplicationContext
 {
@@ -97,6 +99,13 @@ public sealed class Boxes : ApplicationContext
                         await reelBox.Reel.NextAsync();
                         if (reelBox.Reel.Current == first || !Boxes.IsPhoto(reelBox.Reel.Current!)) throw new InvalidOperationException("Slideshow did not advance to another photo");
                         if ((Directory.Exists(Library.Root) ? Directory.GetDirectories(Library.Root).Length : 0) != libraryEntries) throw new InvalidOperationException("Slideshow copied photos into the library");
+                        reelBox.SetInterval(10);
+                        if (reelBox.Reel.IntervalSeconds != 10 || reelBox.State.SlideSeconds != 10) throw new InvalidOperationException("Slideshow interval did not change");
+                        reelBox.SetTitleHidden(true);
+                        if (reelBox.TitleShown || !reelBox.PhotoShown) throw new InvalidOperationException("Hiding the title bar failed");
+                        if (Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR") is { } bare) { await Task.Delay(700); reelBox.RenderPhotoPreview(Path.Combine(bare, "box-no-title.png")); reelBox.RenderMenuPreview(Path.Combine(bare, "menu-slideshow.png")); }
+                        reelBox.SetTitleHidden(false);
+                        if (!reelBox.TitleShown) throw new InvalidOperationException("Showing the title bar failed");
                         if (Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR") is { } reelPreview && File.Exists(wallpaper))
                         {
                             while (Path.GetFileName(reelBox.Reel.Current) != "wallpaper.jpg") await reelBox.Reel.NextAsync();
