@@ -75,12 +75,19 @@ public sealed class Box : Form
         tips.SetToolTip(header, "Drag to move · boxes snap to the grid");
         swatches.Picked += colour => { State.Colour = colour.ToArgb(); Recolour(); owner.Save(); };
         var changePhoto = Menus.Item("Change photo…", Menus.Icons.Photo, () => _ = owner.ChangePhotoAsync(this));
-        menu.Opening += (_, _) => { swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour)); changePhoto.Visible = State.Photo != null; };
+        var nextPhoto = Menus.Item("Next photo", Menus.Icons.Next, () => _ = reel?.NextAsync());
+        var changeFolder = Menus.Item("Change folder…", Menus.Icons.Folder, () => owner.ChangeFolder(this));
+        menu.Opening += (_, _) =>
+        {
+            swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour));
+            changePhoto.Visible = State.Photo != null; nextPhoto.Visible = changeFolder.Visible = State.PhotoFolder != null;
+        };
         menu.Items.AddRange([
             Menus.Spacer(), swatches, Menus.Separator(),
-            changePhoto,
+            changePhoto, nextPhoto, changeFolder,
             Menus.Item("New box", Menus.Icons.Add, () => owner.Add()),
             Menus.Item("New photo box…", Menus.Icons.Photo, () => _ = owner.AddPhotoBoxAsync()),
+            Menus.Item("New slideshow box…", Menus.Icons.Slideshow, () => owner.AddSlideshowBox()),
             Menus.Item("Rename", Menus.Icons.Rename, () => { title.Focus(); title.SelectAll(); }),
             Menus.Item("Open saved items", Menus.Icons.Folder, () => { Directory.CreateDirectory(owner.Library.Root); Process.Start(new ProcessStartInfo(owner.Library.Root) { UseShellExecute = true }); }),
             Menus.Item("Settings…", Menus.Icons.Settings, () => SettingsWindow.Open(owner)),
@@ -93,8 +100,8 @@ public sealed class Box : Form
         foreach (var c in new Control[] { this, header, scroller, items, grip, photo }) c.ContextMenuStrip = menu;
         photo.MouseDoubleClick += (_, e) =>
         {
-            if (e.Button != MouseButtons.Left || State.Photo == null) return;
-            try { Process.Start(new ProcessStartInfo(State.Photo) { UseShellExecute = true }); }
+            if (e.Button != MouseButtons.Left || (reel?.Current ?? State.Photo) is not { } shown) return;
+            try { Process.Start(new ProcessStartInfo(shown) { UseShellExecute = true }); }
             catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException) { SetMessage("Couldn't open this photo."); }
         };
         foreach (var c in new Control[] { header })
@@ -139,16 +146,18 @@ public sealed class Box : Form
         {
             var index = InsertIndex(new Point(e.X, e.Y)); EndDragFeedback();
             // Deferred: the source tile is still inside its DoDragDrop loop, and the move rebuilds (disposes) tiles.
-            if (State.Photo != null) { if (DroppedPhoto(e) is { } image) await owner.ChangePhotoAsync(this, image); }
+            if (State.PhotoFolder != null) { if (DroppedFolder(e) is { } folder) owner.ChangeFolder(this, folder); }
+            else if (State.Photo != null) { if (DroppedPhoto(e) is { } image) await owner.ChangePhotoAsync(this, image); }
             else if (e.Data?.GetDataPresent(TileFormat) == true && tileDrag is { } drag) BeginInvoke(() => owner.MoveItem(drag.From, drag.Path, this, index));
             else if (e.Data?.GetData(DataFormats.FileDrop) is string[] paths) await owner.ImportItemsAsync(this, paths);
         };
     }
     void DragUpdate(DragEventArgs e)
     {
-        bool tile = State.Photo == null && e.Data?.GetDataPresent(TileFormat) == true && tileDrag != null;
+        bool tile = State.Photo == null && State.PhotoFolder == null && e.Data?.GetDataPresent(TileFormat) == true && tileDrag != null;
+        // Photo boxes take a single photo (replacing theirs); slideshow boxes take a single folder.
         bool files = !tile && e.Data?.GetDataPresent(DataFormats.FileDrop) == true && (e.AllowedEffect & DragDropEffects.Copy) != 0
-            && (State.Photo == null || DroppedPhoto(e) != null); // photo boxes take a single photo, which replaces theirs
+            && (State.PhotoFolder != null ? DroppedFolder(e) != null : State.Photo == null || DroppedPhoto(e) != null);
         e.Effect = owner.Busy ? DragDropEffects.None : tile ? DragDropEffects.Move : files ? DragDropEffects.Copy : DragDropEffects.None;
         if (e.Effect == DragDropEffects.None) { EndDragFeedback(); return; }
         if (!draggingOver) { draggingOver = true; ApplyBorder(); Invalidate(); }
@@ -162,13 +171,19 @@ public sealed class Box : Form
     internal void RenderPhotoPreview(string file) { title.Text = State.Name; PerformLayout(); using var bmp = new Bitmap(Width, Height); DrawToBitmap(bmp, ClientRectangle); bmp.Save(file); }
     internal bool PhotoShown => photo.Visible && photo.HasPhoto && !scroller.Visible;
     static string? DroppedPhoto(DragEventArgs e) => e.Data?.GetData(DataFormats.FileDrop) is string[] { Length: 1 } paths && Boxes.IsPhoto(paths[0]) ? paths[0] : null;
-    /// <summary>Switches between the item grid and the photo, depending on State.Photo.</summary>
+    static string? DroppedFolder(DragEventArgs e) => e.Data?.GetData(DataFormats.FileDrop) is string[] { Length: 1 } paths && Directory.Exists(paths[0]) ? paths[0] : null;
+    PhotoReel? reel;
+    /// <summary>Switches between the item grid, a single photo, and a folder slideshow, from State.</summary>
     internal void ShowPhoto()
     {
-        bool on = State.Photo != null;
-        photo.Load(State.Photo); photo.Visible = on; scroller.Visible = !on;
+        reel?.Dispose(); reel = null;
+        bool on = State.Photo != null || State.PhotoFolder != null;
+        photo.Visible = on; scroller.Visible = !on;
+        if (State.PhotoFolder != null) { reel = new PhotoReel(photo, State.PhotoFolder, State.SlideSeconds); _ = reel.StartAsync(); }
+        else { photo.Placeholder = "Photo unavailable — use Change photo…"; photo.Load(State.Photo); }
         if (on) items.ShowMarker(null);
     }
+    internal PhotoReel? Reel => reel;
     void EndDragFeedback() { items.ShowMarker(null); if (!draggingOver) return; draggingOver = false; ApplyBorder(); Invalidate(); }
     /// <summary>Slot a drop at this screen point would take, reading tiles left-to-right, top-to-bottom.</summary>
     int InsertIndex(Point screen)
@@ -343,7 +358,7 @@ public sealed class Box : Form
     }
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { grid?.Dispose(); tips.Dispose(); menu.Dispose(); }
+        if (disposing) { reel?.Dispose(); grid?.Dispose(); tips.Dispose(); menu.Dispose(); }
         base.Dispose(disposing);
     }
 }

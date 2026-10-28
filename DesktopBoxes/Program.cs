@@ -17,6 +17,9 @@ public class State
     public List<string> Items { get; set; } = [];
     /// <summary>Saved copy of the photo for a photo box; null for an ordinary item box.</summary>
     public string? Photo { get; set; }
+    /// <summary>Folder a slideshow box cycles through (read live, not copied); null otherwise.</summary>
+    public string? PhotoFolder { get; set; }
+    public int SlideSeconds { get; set; } = 20;
 }
 public sealed class Boxes : ApplicationContext
 {
@@ -77,6 +80,31 @@ public sealed class Boxes : ApplicationContext
                         if (Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR") is { } photoPreview) { photoBox.State.Name = "Weekend"; photoBox.RenderPhotoPreview(Path.Combine(photoPreview, "box-photo.png")); }
                     }
                     finally { File.Delete(photoSource); }
+                    // Slideshow box: reads a folder live (no library copies), shows a photo, and advances to a different one.
+                    var reelFolder = Path.Combine(Path.GetTempPath(), "Boxes-SmokeReel-" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(Path.Combine(reelFolder, "nested"));
+                    try
+                    {
+                        if (File.Exists(wallpaper)) File.Copy(wallpaper, Path.Combine(reelFolder, "wallpaper.jpg"));
+                        foreach (var (name, colour) in new[] { ("one.png", Color.Teal), (Path.Combine("nested", "two.png"), Color.Coral) })
+                        { using var generated = new Bitmap(400, 300); using (var g = Graphics.FromImage(generated)) g.Clear(colour); generated.Save(Path.Combine(reelFolder, name)); }
+                        File.WriteAllText(Path.Combine(reelFolder, "notes.txt"), "not a photo");
+                        int libraryEntries = Directory.Exists(Library.Root) ? Directory.GetDirectories(Library.Root).Length : 0;
+                        AddSlideshowBox(reelFolder);
+                        var reelBox = Windows.Last();
+                        for (int i = 0; i < 100 && reelBox.Reel?.Current == null; i++) await Task.Delay(100);
+                        if (reelBox.State.PhotoFolder != reelFolder || reelBox.Reel?.Current is not { } first || !reelBox.PhotoShown) throw new InvalidOperationException("Slideshow box did not show a photo from its folder");
+                        await reelBox.Reel.NextAsync();
+                        if (reelBox.Reel.Current == first || !Boxes.IsPhoto(reelBox.Reel.Current!)) throw new InvalidOperationException("Slideshow did not advance to another photo");
+                        if ((Directory.Exists(Library.Root) ? Directory.GetDirectories(Library.Root).Length : 0) != libraryEntries) throw new InvalidOperationException("Slideshow copied photos into the library");
+                        if (Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR") is { } reelPreview && File.Exists(wallpaper))
+                        {
+                            while (Path.GetFileName(reelBox.Reel.Current) != "wallpaper.jpg") await reelBox.Reel.NextAsync();
+                            await Task.Delay(700); reelBox.State.Name = "Holidays"; reelBox.RenderPhotoPreview(Path.Combine(reelPreview, "box-slideshow.png"));
+                            await reelBox.Reel.NextAsync(); await Task.Delay(250); reelBox.RenderPhotoPreview(Path.Combine(reelPreview, "box-slideshow-fade.png"));
+                        }
+                    }
+                    finally { Directory.Delete(reelFolder, true); }
                     test.State.Items.Clear(); test.RefreshItems(); test.RenderPreview();
                     if (Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR") is { } previews) { SettingsWindow.RenderPreview(this, previews); using var trayMenu = TrayMenu(); Menus.RenderPreview(trayMenu, Path.Combine(previews, "menu-tray.png"), 3); }
                     Console.WriteLine("Smoke test passed");
@@ -148,7 +176,8 @@ public sealed class Boxes : ApplicationContext
             Menus.Spacer(), new MenuHeader(() => { int items = Windows.Sum(b => b.State.Items.Count); return $"{Windows.Count} box{(Windows.Count == 1 ? "" : "es")} · {items} item{(items == 1 ? "" : "s")}"; }),
             Menus.Separator(),
             Menus.Item("New box", Menus.Icons.Add, () => Add()),
-            Menus.Item("New photo box…", Menus.Icons.Photo, () => _ = AddPhotoBoxAsync()), toggle,
+            Menus.Item("New photo box…", Menus.Icons.Photo, () => _ = AddPhotoBoxAsync()),
+            Menus.Item("New slideshow box…", Menus.Icons.Slideshow, () => AddSlideshowBox()), toggle,
             Menus.Item("Saved items", Menus.Icons.Folder, () => { Directory.CreateDirectory(Library.Root); Process.Start(new ProcessStartInfo(Library.Root) { UseShellExecute = true }); }),
             Menus.Item("Settings…", Menus.Icons.Settings, () => SettingsWindow.Open(this)),
             Menus.Separator(),
@@ -234,6 +263,25 @@ public sealed class Boxes : ApplicationContext
         var slot = Placement.FindBox(size, [.. Windows.Select(b => b.Bounds)], [.. Screen.AllScreens.Select(s => s.WorkingArea)]);
         if (slot == null) { Status("No free space for a new photo box"); return; }
         Add(new State { Name = Path.GetFileNameWithoutExtension(source), X = slot.Value.X, Y = slot.Value.Y, Width = size.Width, Height = size.Height, Photo = stored, Colour = SwatchRow.Palette[5].Colour.ToArgb() });
+    }
+    static string? PickFolder(string? current)
+    {
+        using var dialog = new FolderBrowserDialog { Description = "Choose a folder of photos for the slideshow", UseDescriptionForTitle = true, SelectedPath = current ?? Environment.GetFolderPath(Environment.SpecialFolder.MyPictures) };
+        return dialog.ShowDialog() == DialogResult.OK ? dialog.SelectedPath : null;
+    }
+    /// <summary>New box cycling through a folder's photos every 20 s. The folder is read live, so nothing is copied.</summary>
+    internal void AddSlideshowBox(string? folder = null)
+    {
+        folder ??= PickFolder(null); if (folder == null) return;
+        var size = PhotoPanel.BoxSizeFor(null, Screen.PrimaryScreen?.WorkingArea.Size ?? new Size(1920, 1032));
+        var slot = Placement.FindBox(size, [.. Windows.Select(b => b.Bounds)], [.. Screen.AllScreens.Select(s => s.WorkingArea)]);
+        if (slot == null) { Status("No free space for a new slideshow box"); return; }
+        Add(new State { Name = new DirectoryInfo(folder).Name, X = slot.Value.X, Y = slot.Value.Y, Width = size.Width, Height = size.Height, PhotoFolder = folder, Colour = SwatchRow.Palette[5].Colour.ToArgb() });
+    }
+    internal void ChangeFolder(Box box, string? folder = null)
+    {
+        folder ??= PickFolder(box.State.PhotoFolder); if (folder == null) return;
+        box.State.PhotoFolder = folder; box.ShowPhoto(); Save();
     }
     internal async Task ChangePhotoAsync(Box box, string? source = null)
     {

@@ -66,7 +66,7 @@ internal static class Menus
     internal static class Icons
     {
         internal const char Add = '', Show = '', Hide = '', Folder = '', Settings = '', Exit = '';
-        internal const char Rename = '', Delete = '', Open = '', Reveal = '', Remove = '', More = '', Photo = '';
+        internal const char Rename = '', Delete = '', Open = '', Reveal = '', Remove = '', More = '', Photo = '', Slideshow = '', Next = '';
     }
 }
 
