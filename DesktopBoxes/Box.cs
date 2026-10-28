@@ -74,6 +74,7 @@ public sealed class Box : Form
         }
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Open saved items", null, (_, _) => { Directory.CreateDirectory(owner.Library.Root); Process.Start(new ProcessStartInfo(owner.Library.Root) { UseShellExecute = true }); });
+        menu.Items.Add("Settings…", null, (_, _) => SettingsWindow.Open(owner));
         menu.Items.Add("Remove box", null, (_, _) =>
         {
             if (owner.Busy) { SetMessage("Let your items finish saving first"); return; }

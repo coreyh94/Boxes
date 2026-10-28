@@ -6,7 +6,7 @@ namespace DesktopBoxes;
 
 static class Program
 {
-    [STAThread] static void Main(string[] args) { if (args.Contains("--desktop-check")) { ApplicationConfiguration.Initialize(); using var icons = new DesktopIcons(); File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "desktop-check.json"), JsonSerializer.Serialize(new { icons.Positions, icons.Spacing, icons.Origin, icons.AnchorInset })); return; } if (args.Contains("--verify-layout")) { ApplicationConfiguration.Initialize(); using var desktop = new DesktopIcons(); var states = JsonSerializer.Deserialize<List<State>>(File.ReadAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DesktopBoxes", "layout.json")))!; var bounds = states.Select(s => new Rectangle(s.X, s.Y, s.Width, s.Height)).ToArray(); if (bounds.Any(b => desktop.Positions.Any(p => b.IntersectsWith(Placement.Cell(p, desktop.Spacing, desktop.AnchorInset))))) throw new Exception("Desktop icon overlaps a saved box"); if (bounds.Where((b, i) => bounds.Where((_, j) => j != i).Any(b.IntersectsWith)).Any()) throw new Exception("Boxes overlap"); return; } if (args.Contains("--library-tests")) { LibraryTests.Run(); return; } if (args.Contains("--placement-tests")) { PlacementTests.Run(); return; } using var mutex = new Mutex(true, args.Contains("--smoke-test") ? "Local\\DesktopBoxes.SmokeTest" : "Local\\DesktopBoxes", out var first); if (!first) return; ApplicationConfiguration.Initialize(); Application.Run(new Boxes(args.Contains("--smoke-test"))); }
+    [STAThread] static void Main(string[] args) { if (args.Contains("--desktop-check")) { ApplicationConfiguration.Initialize(); using var icons = new DesktopIcons(); File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "desktop-check.json"), JsonSerializer.Serialize(new { icons.Positions, icons.Spacing, icons.Origin, icons.AnchorInset })); return; } if (args.Contains("--verify-layout")) { ApplicationConfiguration.Initialize(); using var desktop = new DesktopIcons(); var states = JsonSerializer.Deserialize<List<State>>(File.ReadAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DesktopBoxes", "layout.json")))!; var bounds = states.Select(s => new Rectangle(s.X, s.Y, s.Width, s.Height)).ToArray(); if (bounds.Any(b => desktop.Positions.Any(p => b.IntersectsWith(Placement.Cell(p, desktop.Spacing, desktop.AnchorInset))))) throw new Exception("Desktop icon overlaps a saved box"); if (bounds.Where((b, i) => bounds.Where((_, j) => j != i).Any(b.IntersectsWith)).Any()) throw new Exception("Boxes overlap"); return; } if (args.Contains("--library-tests")) { LibraryTests.Run(); return; } if (args.Contains("--placement-tests")) { PlacementTests.Run(); return; } if (args.Length == 2 && args[0] == "--write-icon") { using var ico = File.Create(args[1]); AppIcon.WriteIco(ico); return; } using var mutex = new Mutex(true, args.Contains("--smoke-test") ? "Local\\DesktopBoxes.SmokeTest" : "Local\\DesktopBoxes", out var first); if (!first) return; ApplicationConfiguration.Initialize(); Application.Run(new Boxes(args.Contains("--smoke-test"))); }
 }
 public class State
 {
@@ -24,6 +24,7 @@ public sealed class Boxes : ApplicationContext
     internal static readonly string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DesktopBoxes");
     bool ready; string lastStatus = ""; internal bool Busy; bool exitPending; readonly bool smokeMode;
     internal readonly ItemLibrary Library;
+    internal AppSettings Settings = new(); int pinAttempts;
     readonly string file = Path.Combine(folder, "layout.json");
     public Boxes(bool smoke = false)
     {
@@ -46,6 +47,7 @@ public sealed class Boxes : ApplicationContext
                     ((Button)test.Controls.Find("NewBoxButton", true).Single()).PerformClick();
                     if (Windows.Count != 2 || Windows[0].Bounds.IntersectsWith(Windows[1].Bounds)) throw new InvalidOperationException("New box control failed");
                     test.State.Items.Clear(); test.RefreshItems(); test.RenderPreview();
+                    if (Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR") is { } previews) SettingsWindow.RenderPreview(this, previews);
                 }
                 finally
                 {
@@ -63,19 +65,26 @@ public sealed class Boxes : ApplicationContext
         menu.Items.Add("New box", null, (_, _) => Add());
         menu.Items.Add("Show boxes", null, (_, _) => { foreach (var b in Windows) b.Show(); ProtectIcons(); });
         menu.Items.Add("Hide boxes", null, (_, _) => { foreach (var b in Windows) b.Hide(); });
-        var startup = new ToolStripMenuItem("Start with Windows") { CheckOnClick = true };
-        using (var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")) startup.Checked = key?.GetValue("DesktopBoxes") != null;
-        startup.Click += (_, _) => { using var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); if (startup.Checked) key.SetValue("DesktopBoxes", "\"" + Application.ExecutablePath + "\""); else key.DeleteValue("DesktopBoxes", false); };
-        menu.Items.Add(startup);
+        Settings = AppSettings.Load(); Startup.Sync(Settings.StartWithWindows);
         menu.Items.Add("Saved items", null, (_, _) => { Directory.CreateDirectory(Library.Root); Process.Start(new ProcessStartInfo(Library.Root) { UseShellExecute = true }); });
+        menu.Items.Add("Settings…", null, (_, _) => SettingsWindow.Open(this));
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => RequestExit());
-        tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "Desktop Boxes", Visible = true, ContextMenuStrip = menu };
+        menu.Renderer = new DarkMenuRenderer(); menu.ShowImageMargin = false;
+        menu.BackColor = Color.FromArgb(29, 34, 45); menu.ForeColor = Theme.Ink; menu.Font = Theme.Body;
+        tray = new NotifyIcon { Icon = AppIcon.Create(SystemInformation.SmallIconSize), Text = "Boxes", Visible = true, ContextMenuStrip = menu };
         tray.DoubleClick += (_, _) => Add();
         if (File.Exists(file)) try { foreach (var s in JsonSerializer.Deserialize<List<State>>(File.ReadAllText(file)) ?? []) Add(s); } catch (JsonException) { File.Copy(file, file + ".invalid-" + DateTime.Now.Ticks); }
         if (Windows.Count == 0) Add();
         ready = true; Save(); ProtectIcons();
         if (Windows.Count > 0) Windows[0].BeginInvoke(async () => await MigrateItemsAsync());
-        timer.Tick += (_, _) => { Native.KeepOnDesktop(Windows); ProtectIcons(); }; timer.Start();
+        timer.Tick += (_, _) => { Native.KeepOnDesktop(Windows); ProtectIcons(); PinTrayOnce(); }; timer.Start();
+    }
+    /// <summary>Explorer registers the tray icon shortly after it first appears; pin it beside the clock once per executable, then respect the user's choice.</summary>
+    void PinTrayOnce()
+    {
+        if (pinAttempts > 80 || string.Equals(Settings.TrayPinnedFor, Application.ExecutablePath, StringComparison.OrdinalIgnoreCase)) return;
+        pinAttempts++; if (TrayPin.Set(true)) { Settings.TrayPinnedFor = Application.ExecutablePath; Settings.Save(); }
     }
     internal void Add(State? state = null)
     {

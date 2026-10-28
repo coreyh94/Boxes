@@ -21,7 +21,9 @@ dotnet publish DesktopBoxes -c Release -o dist
 - Original files remain in place. After **Saved in Boxes** appears, deleting the desktop original does not remove the saved copy. Files and folders are separate copies, not synced; shortcuts still launch their original installed app or target.
 - Removing an item or box never deletes its saved files. **Open saved items** in box options (or **Saved items** in the tray) opens the library.
 - Rounded corners, tinted dark surfaces, colour accents, keyboard focus/hover highlights, compact controls, and a clear empty state keep the interface quiet. Alt+F4 hides a box; use its options to remove it.
-- Tray controls show/hide boxes, enable **Start with Windows**, and exit. Enable startup after putting the executable in its permanent folder.
+- Boxes runs quietly in the system tray (the Boxes icon beside the clock). Tray controls show/hide boxes, open saved items, open **Settings…**, and exit.
+- **Settings…** (tray, or any box's options menu) has **Start Boxes with Windows** (on by default) and **Show icon next to the clock**. Startup uses the per-user Run key, so it also appears in Windows Settings › Apps › Startup; switching it off there is respected. Each launch keeps the registered path pointed at the running executable. The tray icon is pinned beside the clock once per executable path; after that, Windows' own taskbar setting wins. Preferences live in `%LOCALAPPDATA%\DesktopBoxes\settings.json`.
+- Boxes is a per-user tray app rather than a Windows service: services run in an isolated session and cannot show windows on your desktop.
 - Layout is saved under `%LOCALAPPDATA%\DesktopBoxes\layout.json`.
 
 ## Independent saved items
