@@ -40,6 +40,8 @@ To build both release downloads (the installer needs [Inno Setup 6](https://jrso
 
 This writes `Boxes-Setup.exe` and `Boxes-Portable.exe` to `release\`, ready to attach to a GitHub release under those names so the download links above keep working. The version comes from `<Version>` in `DesktopBoxes.csproj`.
 
+Official releases are built by GitHub Actions instead (`.github/workflows/release.yml`). Bump `<Version>`, then push a matching tag such as `v1.2.0`. The workflow builds and tests both files from source, then attaches them to a draft release for that tag. Add release notes and publish the draft; until then, neither users nor the in-app updater can see it.
+
 ## Controls
 
 - Create a box from **New box** in a box's `⋯` menu or the tray menu, or double-click the tray icon. New boxes go in free grid-aligned space. Boxes are clean cards: an editable title, a `⋯` options button, and your items. Drag the header to move; drag the bottom-right corner to resize. Text and spacing follow Windows display scaling.

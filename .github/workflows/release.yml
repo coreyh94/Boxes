@@ -1,0 +1,73 @@
+# Builds Boxes-Setup.exe and Boxes-Portable.exe from source on GitHub's Windows runners.
+#   Push a tag like v1.2.0 (matching <Version> in DesktopBoxes.csproj): the files are attached to a *draft* release
+#   for that tag, so nothing reaches users or the in-app updater until the release is published.
+#   Run it by hand from the Actions tab to build and test without releasing (files are kept as a workflow artifact).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Check tag matches version
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $version = ([xml](Get-Content DesktopBoxes\DesktopBoxes.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if ("v$version" -ne '${{ github.ref_name }}') { throw "Tag ${{ github.ref_name }} doesn't match <Version>$version</Version>" }
+
+      - name: Build
+        shell: pwsh
+        run: .\build-release.ps1
+
+      # Boxes is a WinExe, so wait on each test run explicitly and check its exit code.
+      - name: Test
+        shell: pwsh
+        run: |
+          foreach ($test in '--update-tests', '--library-tests', '--placement-tests') {
+            $run = Start-Process release\Boxes-Portable.exe -ArgumentList $test -Wait -PassThru -NoNewWindow
+            if ($run.ExitCode) { throw "$test failed (exit $($run.ExitCode))" }
+            "$test passed"
+          }
+
+      # Code signing (SignPath Foundation) goes here once approved: sign release\win-x64\DesktopBoxes.exe before
+      # the installer is built, then Boxes-Setup.exe after, using signpath/github-action-submit-signing-request.
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Boxes-${{ github.ref_name }}
+          path: |
+            release/Boxes-Setup.exe
+            release/Boxes-Portable.exe
+
+      - name: Attach to draft release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          gh release view $tag *> $null
+          if ($LASTEXITCODE) {
+            gh release create $tag --draft --title "Boxes $($tag.TrimStart('v'))" --notes "Release notes to follow."
+            if ($LASTEXITCODE) { throw 'Creating the draft release failed' }
+          }
+          gh release upload $tag release\Boxes-Setup.exe release\Boxes-Portable.exe --clobber
+          if ($LASTEXITCODE) { throw 'Uploading the release files failed' }
+          Get-ChildItem release -File | ForEach-Object { '{0}  {1}' -f $_.Name, (Get-FileHash $_.FullName).Hash.ToLower() }
