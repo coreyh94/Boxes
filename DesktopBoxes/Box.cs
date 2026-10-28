@@ -20,10 +20,10 @@ internal static class Theme
     internal static Color Mix(Color a, Color b, float amount) => Color.FromArgb(
         (int)(a.R * (1 - amount) + b.R * amount), (int)(a.G * (1 - amount) + b.G * amount), (int)(a.B * (1 - amount) + b.B * amount));
     /// <summary>
-    /// A box background in the swatch's own hue: fixed dark lightness so the light text stays readable, and most of the
-    /// swatch's saturation. Blending into <see cref="Card"/> instead washes every colour towards grey.
+    /// A box background in the swatch's own hue: fixed dark lightness so the light text stays readable, and half the
+    /// swatch's saturation (capped) so boxes sit calmly together. Blending into <see cref="Card"/> instead washes every colour towards grey.
     /// </summary>
-    internal static Color Tint(Color swatch) => FromHsl(swatch.GetHue(), Math.Min(.7f, swatch.GetSaturation() * .75f), .26f);
+    internal static Color Tint(Color swatch) => FromHsl(swatch.GetHue(), Math.Min(.45f, swatch.GetSaturation() * .5f), .23f);
     static Color FromHsl(float hue, float saturation, float lightness)
     {
         float c = (1 - Math.Abs(2 * lightness - 1)) * saturation, h = hue / 60, x = c * (1 - Math.Abs(h % 2 - 1)), m = lightness - c / 2;
