@@ -34,7 +34,8 @@ public sealed class Box : Form
     readonly Label status = new() { AutoEllipsis = true, Font = Theme.Small, ForeColor = Theme.Muted, TextAlign = ContentAlignment.MiddleLeft };
     readonly SoftButton add = new() { Name = "NewBoxButton", Text = "+ New box", AccessibleName = "Create a new box" };
     readonly SoftButton options = new() { Text = "···", AccessibleName = "Box options" };
-    readonly ContextMenuStrip menu = new();
+    readonly ContextMenuStrip menu = Menus.Create(Color.SteelBlue);
+    readonly SwatchRow swatches = new();
     readonly ToolTip tips = new() { InitialDelay = 400, AutoPopDelay = 6000 };
     Color accent;
     Point drag;
@@ -62,24 +63,20 @@ public sealed class Box : Form
         tips.SetToolTip(add, "Create a new box"); tips.SetToolTip(options, "Colours and box options");
         tips.SetToolTip(header, "Drag to move · boxes snap to the grid");
         tips.SetToolTip(footer, "Drag to resize");
-        menu.Renderer = new DarkMenuRenderer(); menu.ShowImageMargin = false;
-        menu.BackColor = Color.FromArgb(29, 34, 45); menu.ForeColor = Theme.Ink; menu.Font = Theme.Body;
-        menu.Items.Add("New box", null, (_, _) => owner.Add());
-        menu.Items.Add(new ToolStripSeparator());
-        foreach (var choice in new[] { ("Ocean", 0x739FF4), ("Mint", 0x65C8AD), ("Lavender", 0xAC91ED), ("Rose", 0xE796AE), ("Amber", 0xDFBA78), ("Slate", 0x97ABC4) })
-        {
-            var colour = Color.FromArgb(255, Color.FromArgb(choice.Item2));
-            var entry = menu.Items.Add("●   " + choice.Item1); entry.ForeColor = colour;
-            entry.Click += (_, _) => { State.Colour = colour.ToArgb(); Recolour(); owner.Save(); };
-        }
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Open saved items", null, (_, _) => { Directory.CreateDirectory(owner.Library.Root); Process.Start(new ProcessStartInfo(owner.Library.Root) { UseShellExecute = true }); });
-        menu.Items.Add("Settings…", null, (_, _) => SettingsWindow.Open(owner));
-        menu.Items.Add("Remove box", null, (_, _) =>
-        {
-            if (owner.Busy) { SetMessage("Let your items finish saving first"); return; }
-            owner.Windows.Remove(this); owner.Save(); Close();
-        });
+        swatches.Picked += colour => { State.Colour = colour.ToArgb(); Recolour(); owner.Save(); };
+        menu.Opening += (_, _) => swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour));
+        menu.Items.AddRange([
+            Menus.Spacer(), swatches, Menus.Separator(),
+            Menus.Item("New box", Menus.Icons.Add, () => owner.Add()),
+            Menus.Item("Rename", Menus.Icons.Rename, () => { title.Focus(); title.SelectAll(); }),
+            Menus.Item("Open saved items", Menus.Icons.Folder, () => { Directory.CreateDirectory(owner.Library.Root); Process.Start(new ProcessStartInfo(owner.Library.Root) { UseShellExecute = true }); }),
+            Menus.Item("Settings…", Menus.Icons.Settings, () => SettingsWindow.Open(owner)),
+            Menus.Separator(),
+            Menus.Item("Remove box", Menus.Icons.Delete, () =>
+            {
+                if (owner.Busy) { SetMessage("Let your items finish saving first"); return; }
+                owner.Windows.Remove(this); owner.Save(); Close();
+            }, danger: true), Menus.Spacer()]);
         foreach (var c in new Control[] { this, header, count, items, footer }) c.ContextMenuStrip = menu;
         foreach (var c in new Control[] { header, count })
         {
@@ -169,7 +166,8 @@ public sealed class Box : Form
         header.BackColor = title.BackColor = Theme.Mix(BackColor, accent, .055f);
         items.BackColor = footer.BackColor = BackColor; items.Accent = accent;
         add.Accent = options.Accent = accent;
-        foreach (var tile in items.Controls.OfType<ItemTile>()) tile.Accent = accent;
+        foreach (var tile in items.Controls.OfType<ItemTile>()) { tile.Accent = accent; if (tile.ContextMenuStrip != null) Menus.SetAccent(tile.ContextMenuStrip, accent); }
+        Menus.SetAccent(menu, accent);
         Invalidate(true);
     }
     internal void SetMessage(string? text) { message = text; UpdateStatus(); }
@@ -202,10 +200,12 @@ public sealed class Box : Form
                 catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException) { SetMessage("Couldn't open this item. Check its saved file."); }
             };
             tips.SetToolTip(tile, name + (owner.Library.Contains(path) ? "\nSaved in Boxes" : "\nOriginal unavailable — drop it again to save a copy"));
-            var itemMenu = new ContextMenuStrip { Renderer = new DarkMenuRenderer(), BackColor = menu.BackColor, ForeColor = Theme.Ink, ShowImageMargin = false };
-            itemMenu.Items.Add("Open", null, (_, _) => tile.PerformClick());
-            itemMenu.Items.Add("Show saved file", null, (_, _) => Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + path + "\"") { UseShellExecute = true }));
-            itemMenu.Items.Add("Remove from box", null, (_, _) => { if (owner.Busy) return; State.Items.Remove(path); RefreshItems(); owner.Save(); });
+            var itemMenu = Menus.Create(accent);
+            itemMenu.Items.AddRange([
+                Menus.Spacer(), Menus.Item("Open", Menus.Icons.Open, () => tile.PerformClick()),
+                Menus.Item("Show saved file", Menus.Icons.Reveal, () => Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + path + "\"") { UseShellExecute = true })),
+                Menus.Separator(),
+                Menus.Item("Remove from box", Menus.Icons.Remove, () => { if (owner.Busy) return; State.Items.Remove(path); RefreshItems(); owner.Save(); }, danger: true), Menus.Spacer()]);
             tile.ContextMenuStrip = itemMenu;
             tile.Disposed += (_, _) => { tile.Image?.Dispose(); itemMenu.Dispose(); };
             EnableDrop(tile); items.Controls.Add(tile);
@@ -229,6 +229,7 @@ public sealed class Box : Form
         {
             Directory.CreateDirectory(output);
             using var bitmap = new Bitmap(Width, Height); DrawToBitmap(bitmap, ClientRectangle); bitmap.Save(Path.Combine(output, "boxes-populated.png"));
+            swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour)); Menus.RenderPreview(menu, Path.Combine(output, "menu-box.png"), 3);
             foreach (Control c in items.Controls.Cast<Control>().ToArray()) c.Dispose();
             Size = new Size(288, 240); count.Text = "0 items"; status.Text = "Your desktop, a little calmer."; PerformLayout(); LayoutChrome();
             using var empty = new Bitmap(Width, Height); DrawToBitmap(empty, ClientRectangle); empty.Save(Path.Combine(output, "boxes-compact.png"));
@@ -295,14 +296,6 @@ internal sealed class ItemTile : SoftButton
         if (Image != null) e.Graphics.DrawImage(Image, new Rectangle((Width - 32) / 2, 10, 32, 32));
         TextRenderer.DrawText(e.Graphics, Text, Theme.Body, new Rectangle(3, 51, Width - 6, 37), Theme.Ink, TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
     }
-}
-internal sealed class DarkMenuRenderer : ToolStripProfessionalRenderer
-{
-    protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
-    {
-        if (e.Item.Selected) { using var b = new SolidBrush(Color.FromArgb(51, 62, 81)); e.Graphics.FillRectangle(b, new Rectangle(Point.Empty, e.Item.Size)); }
-    }
-    protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e) { }
 }
 internal static class ShellImage
 {

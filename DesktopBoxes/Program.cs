@@ -47,7 +47,7 @@ public sealed class Boxes : ApplicationContext
                     ((Button)test.Controls.Find("NewBoxButton", true).Single()).PerformClick();
                     if (Windows.Count != 2 || Windows[0].Bounds.IntersectsWith(Windows[1].Bounds)) throw new InvalidOperationException("New box control failed");
                     test.State.Items.Clear(); test.RefreshItems(); test.RenderPreview();
-                    if (Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR") is { } previews) SettingsWindow.RenderPreview(this, previews);
+                    if (Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR") is { } previews) { SettingsWindow.RenderPreview(this, previews); using var trayMenu = TrayMenu(); Menus.RenderPreview(trayMenu, Path.Combine(previews, "menu-tray.png"), 3); }
                 }
                 finally
                 {
@@ -61,18 +61,8 @@ public sealed class Boxes : ApplicationContext
             test.Show(); return;
         }
         Directory.CreateDirectory(folder);
-        var menu = new ContextMenuStrip();
-        menu.Items.Add("New box", null, (_, _) => Add());
-        menu.Items.Add("Show boxes", null, (_, _) => { foreach (var b in Windows) b.Show(); ProtectIcons(); });
-        menu.Items.Add("Hide boxes", null, (_, _) => { foreach (var b in Windows) b.Hide(); });
         Settings = AppSettings.Load(); Startup.Sync(Settings.StartWithWindows);
-        menu.Items.Add("Saved items", null, (_, _) => { Directory.CreateDirectory(Library.Root); Process.Start(new ProcessStartInfo(Library.Root) { UseShellExecute = true }); });
-        menu.Items.Add("Settings…", null, (_, _) => SettingsWindow.Open(this));
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Exit", null, (_, _) => RequestExit());
-        menu.Renderer = new DarkMenuRenderer(); menu.ShowImageMargin = false;
-        menu.BackColor = Color.FromArgb(29, 34, 45); menu.ForeColor = Theme.Ink; menu.Font = Theme.Body;
-        tray = new NotifyIcon { Icon = AppIcon.Create(SystemInformation.SmallIconSize), Text = "Boxes", Visible = true, ContextMenuStrip = menu };
+        tray = new NotifyIcon { Icon = AppIcon.Create(SystemInformation.SmallIconSize), Text = "Boxes", Visible = true, ContextMenuStrip = TrayMenu() };
         tray.DoubleClick += (_, _) => Add();
         if (File.Exists(file)) try { foreach (var s in JsonSerializer.Deserialize<List<State>>(File.ReadAllText(file)) ?? []) Add(s); } catch (JsonException) { File.Copy(file, file + ".invalid-" + DateTime.Now.Ticks); }
         if (Windows.Count == 0) Add();
@@ -85,6 +75,29 @@ public sealed class Boxes : ApplicationContext
     {
         if (pinAttempts > 80 || string.Equals(Settings.TrayPinnedFor, Application.ExecutablePath, StringComparison.OrdinalIgnoreCase)) return;
         pinAttempts++; if (TrayPin.Set(true)) { Settings.TrayPinnedFor = Application.ExecutablePath; Settings.Save(); }
+    }
+    internal ContextMenuStrip TrayMenu()
+    {
+        var menu = Menus.Create(Color.FromArgb(255, Color.FromArgb(0x739FF4)));
+        var toggle = Menus.Item("Hide boxes", Menus.Icons.Hide, () =>
+        {
+            if (Windows.Any(b => b.Visible)) foreach (var b in Windows) b.Hide();
+            else { foreach (var b in Windows) b.Show(); ProtectIcons(); }
+        });
+        menu.Opening += (_, _) =>
+        {
+            bool shown = Windows.Any(b => b.Visible);
+            toggle.Text = shown ? "Hide boxes" : "Show boxes"; toggle.Image?.Dispose(); toggle.Image = Menus.Glyph(shown ? Menus.Icons.Hide : Menus.Icons.Show, Theme.Muted);
+        };
+        menu.Items.AddRange([
+            Menus.Spacer(), new MenuHeader(() => { int items = Windows.Sum(b => b.State.Items.Count); return $"{Windows.Count} box{(Windows.Count == 1 ? "" : "es")} · {items} item{(items == 1 ? "" : "s")}"; }),
+            Menus.Separator(),
+            Menus.Item("New box", Menus.Icons.Add, () => Add()), toggle,
+            Menus.Item("Saved items", Menus.Icons.Folder, () => { Directory.CreateDirectory(Library.Root); Process.Start(new ProcessStartInfo(Library.Root) { UseShellExecute = true }); }),
+            Menus.Item("Settings…", Menus.Icons.Settings, () => SettingsWindow.Open(this)),
+            Menus.Separator(),
+            Menus.Item("Exit", Menus.Icons.Exit, RequestExit), Menus.Spacer()]);
+        return menu;
     }
     internal void Add(State? state = null)
     {
