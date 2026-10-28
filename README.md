@@ -17,10 +17,18 @@ dotnet publish DesktopBoxes -c Release -o dist
 - Click **⋯**, or right-click a title/background, for the colour palette and deletion.
 - Drag the left edge of a title bar to move; a 48-pixel grid appears and placement snaps on release.
 - Edit the title directly. Drag the bottom edge to resize.
-- Drop files, folders, or shortcuts into a box. Slots fill left to right, then top to bottom. Click to open; right-click an item to remove it.
-- Original files remain in place. Removing a box never deletes files.
+- Drop files, folders, or shortcuts into a box. Boxes saves an independent copy, with progress shown in the footer. Slots fill left to right, then top to bottom. Click to open; right-click an item to remove it or show its saved file.
+- Original files remain in place. After **Saved in Boxes** appears, deleting the desktop original does not remove the saved copy. Files and folders are separate copies, not synced; shortcuts still launch their original installed app or target.
+- Removing an item or box never deletes its saved files. **Open saved items** in box options (or **Saved items** in the tray) opens the library.
+- Rounded corners, tinted dark surfaces, colour accents, keyboard focus/hover highlights, compact controls, and a clear empty state keep the interface quiet. Alt+F4 hides a box; use its options to remove it.
 - Tray controls show/hide boxes, enable **Start with Windows**, and exit. Enable startup after putting the executable in its permanent folder.
 - Layout is saved under `%LOCALAPPDATA%\DesktopBoxes\layout.json`.
+
+## Independent saved items
+
+Copies live in `%LOCALAPPDATA%\DesktopBoxes\Library`. Imports run in the background, complete in a staging directory, and are published before the saved layout references them. Failed imports do not publish a partial item. Copies of the same source are reused; differently located files with the same name remain distinct. Removing a box retains its library files. Large folders require additional disk space because their contents are copied.
+
+Existing layouts are backed up before migration. Available originals are copied and their layout entries updated automatically; missing originals remain listed with an inline instruction to drop them again. Items deleted before a copy was made cannot be recovered by the app. Junctions, symbolic links, and cloud placeholders are rejected instead of being recursively followed; use regular local files/folders. Shortcuts preserve their launch arguments, working folder, and target, but do not back up the installed application itself.
 
 ## Icon and box avoidance
 
@@ -34,6 +42,6 @@ Microsoft explains why old ListView messages are unsuitable here: https://devblo
 
 Verified: clean Release build/publish; UI smoke test invoking the actual New box button; placement tests for collisions, stable repeated placement, full screens, and negative monitor origins; live Explorer position reads and accepted icon moves; live checks that icon cells do not intersect saved boxes and saved boxes do not intersect each other.
 
-Developer checks: `--smoke-test`, `--placement-tests`, `--desktop-check` (writes a snapshot beside the executable), and `--verify-layout` (checks current Explorer positions against saved boxes).
+Developer checks: `--smoke-test` (imports an item through the app, deletes its original, verifies retention, exercises New box, and renders normal/compact controls), `--library-tests` (file/folder/URL/Windows shortcut deletion, shortcut metadata, reload, same-name collisions, self-import and failed-copy cleanup), `--placement-tests`, `--desktop-check` (writes a snapshot beside the executable), and `--verify-layout` (checks current Explorer positions against saved boxes).
 
-Windows tool windows were not exposed by the UI inspection inventory, so screenshot-based visual inspection was unavailable. Mixed-DPI changes, Explorer restarts, and Show Desktop need broader hands-on testing. Boxes use ordinary borderless windows maintained near the desktop in the Z order, rather than an Explorer extension. Shell virtual items such as Recycle Bin cannot be dropped as file shortcuts. Items cannot yet be manually reordered or transferred between boxes. Startup remains opt-in through the tray menu.
+Normal and compact UI layouts were rendered from the actual controls and visually inspected. Windows tool windows were not exposed by the UI inspection inventory for live screenshots. Mixed-DPI changes, Explorer restarts, and Show Desktop need broader hands-on testing. Boxes use ordinary borderless windows maintained near the desktop in the Z order, rather than an Explorer extension. Shell virtual items such as Recycle Bin cannot be dropped as file shortcuts. Items cannot yet be manually reordered or transferred between boxes. Startup remains opt-in through the tray menu.
