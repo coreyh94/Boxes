@@ -108,29 +108,28 @@ internal static class AppIcon
 internal sealed class SettingsWindow : Form
 {
     static SettingsWindow? open;
-    [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(nint hwnd, int attr, ref int value, int size);
-    internal static void Open(Boxes app) { if (open is { IsDisposed: false }) { open.Activate(); return; } open = new SettingsWindow(app); open.Show(); open.Activate(); }
+   internal static void Open(Boxes app) { if (open is { IsDisposed: false }) { open.Activate(); return; } open = new SettingsWindow(app); open.Show(); open.Activate(); }
 
     SettingsWindow(Boxes app)
     {
-        Text = "Boxes settings"; Icon = AppIcon.Create(new Size(32, 32)); FormBorderStyle = FormBorderStyle.FixedSingle; MaximizeBox = MinimizeBox = false;
-        StartPosition = FormStartPosition.CenterScreen; AutoScaleMode = AutoScaleMode.Dpi; ClientSize = new Size(420, 236);
+        Text = "Boxes settings"; Icon = AppIcon.Create(new Size(Theme.S(32), Theme.S(32))); FormBorderStyle = FormBorderStyle.FixedSingle; MaximizeBox = MinimizeBox = false;
+        StartPosition = FormStartPosition.CenterScreen; AutoScaleMode = AutoScaleMode.None; ClientSize = new Size(Theme.S(420), Theme.S(236));
         BackColor = Color.FromArgb(21, 25, 34); ForeColor = Theme.Ink; Font = Theme.Body; TopMost = true;
-        var heading = new Label { Text = "Settings", Font = Theme.Title, ForeColor = Theme.Ink, Location = new Point(22, 18), AutoSize = true };
-        var startup = Option("Start Boxes with Windows", "Opens quietly in the tray when you sign in.", 62, Startup.Enabled);
+        var heading = new Label { Text = "Settings", Font = Theme.Title, ForeColor = Theme.Ink, Location = new Point(Theme.S(22), Theme.S(18)), AutoSize = true };
+        var startup = Option("Start Boxes with Windows", "Opens quietly in the tray when you sign in.", Theme.S(62), Startup.Enabled);
         startup.CheckedChanged += (_, _) => { Startup.Set(startup.Checked); app.Settings.StartWithWindows = startup.Checked; app.Settings.Save(); };
         var pinned = TrayPin.Pinned;
-        var pin = Option("Show icon next to the clock", pinned == null ? "Available once Windows has registered the tray icon." : "Otherwise it sits under the ^ overflow arrow.", 122, pinned == true);
+        var pin = Option("Show icon next to the clock", pinned == null ? "Available once Windows has registered the tray icon." : "Otherwise it sits under the ^ overflow arrow.", Theme.S(122), pinned == true);
         pin.Enabled = pinned != null; pin.CheckedChanged += (_, _) => TrayPin.Set(pin.Checked);
-        var done = new SoftButton { Text = "Done", Size = new Size(92, 32), Location = new Point(ClientSize.Width - 114, ClientSize.Height - 50), Accent = Color.FromArgb(255, Color.FromArgb(0x739FF4)) };
+        var done = new SoftButton { Text = "Done", Size = new Size(Theme.S(92), Theme.S(32)), Location = new Point(ClientSize.Width - Theme.S(114), ClientSize.Height - Theme.S(50)), Accent = Color.FromArgb(255, Color.FromArgb(0x739FF4)) };
         done.Click += (_, _) => Close(); AcceptButton = CancelButton = done;
         Controls.AddRange([heading, done]);
     }
     CheckBox Option(string label, string detail, int top, bool value)
     {
-        var box = new CheckBox { Text = label, Checked = value, AutoSize = true, Location = new Point(24, top), ForeColor = Theme.Ink, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
+        var box = new CheckBox { Text = label, Checked = value, AutoSize = true, Location = new Point(Theme.S(24), top), ForeColor = Theme.Ink, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
         box.FlatAppearance.BorderColor = Theme.Muted; box.FlatAppearance.CheckedBackColor = box.FlatAppearance.MouseOverBackColor = Color.FromArgb(37, 45, 60);
-        var note = new Label { Text = detail, AutoSize = true, Location = new Point(44, top + 26), Font = Theme.Small, ForeColor = Theme.Muted };
+        var note = new Label { Text = detail, AutoSize = true, Location = new Point(Theme.S(44), top + Theme.S(26)), Font = Theme.Small, ForeColor = Theme.Muted };
         Controls.AddRange([box, note]); return box;
     }
     /// <summary>Smoke-test render of the window and icon sizes into BOXES_PREVIEW_DIR; never touches settings.</summary>
@@ -142,6 +141,6 @@ internal sealed class SettingsWindow : Form
         sheet.Save(Path.Combine(output, "icon.png"));
     }
     static readonly int[] Sizes = [16, 20, 24, 32, 48, 64];
-    protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); int dark = 1; DwmSetWindowAttribute(Handle, 20, ref dark, 4); }
+    protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); int dark = 1; Native.DwmSetWindowAttribute(Handle, 20, ref dark, 4); }
     protected override void OnFormClosed(FormClosedEventArgs e) { open = null; base.OnFormClosed(e); }
 }

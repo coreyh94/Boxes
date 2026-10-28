@@ -8,9 +8,15 @@ internal static class Theme
 {
     internal static readonly Color Ink = Color.FromArgb(237, 241, 248);
     internal static readonly Color Muted = Color.FromArgb(155, 168, 187);
-    internal static readonly Font Title = new("Segoe UI Semibold", 18, FontStyle.Regular, GraphicsUnit.Pixel);
-    internal static readonly Font Body = new("Segoe UI", 12, FontStyle.Regular, GraphicsUnit.Pixel);
-    internal static readonly Font Small = new("Segoe UI", 11, FontStyle.Regular, GraphicsUnit.Pixel);
+    /// <summary>Display scaling (1.5 at 150%). The app is system-DPI aware, so all chrome is sized in 96-DPI units times this.</summary>
+    internal static readonly float Scale = ReadScale();
+    static float ReadScale() { using var g = Graphics.FromHwnd(0); return Math.Max(1f, g.DpiX / 96f); }
+    internal static int S(int units) => (int)Math.Round(units * Scale);
+    internal static readonly Font Title = new("Segoe UI Semibold", 15 * Scale, FontStyle.Regular, GraphicsUnit.Pixel);
+    internal static readonly Font Body = new("Segoe UI", 12 * Scale, FontStyle.Regular, GraphicsUnit.Pixel);
+    internal static readonly Font Small = new("Segoe UI", 11 * Scale, FontStyle.Regular, GraphicsUnit.Pixel);
+    internal static readonly Font Label = new("Segoe UI", 12 * Scale, FontStyle.Regular, GraphicsUnit.Pixel);
+    internal static readonly Color Card = Color.FromArgb(24, 27, 35);
     internal static Color Mix(Color a, Color b, float amount) => Color.FromArgb(
         (int)(a.R * (1 - amount) + b.R * amount), (int)(a.G * (1 - amount) + b.G * amount), (int)(a.B * (1 - amount) + b.B * amount));
     internal static GraphicsPath Round(RectangleF r, float radius)
@@ -28,14 +34,14 @@ public sealed class Box : Form
     internal bool Moving;
     /// <summary>The saved spot. Only a deliberate move/resize changes it; monitor changes just borrow space elsewhere.</summary>
     internal Rectangle Home => new(State.X, State.Y, State.Width, State.Height);
-    readonly TilePanel items = new() { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(10, 4, 10, 4) };
-    readonly Panel header = new() { Dock = DockStyle.Top, Height = 64, Cursor = Cursors.SizeAll };
+    readonly TilePanel items = new() { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(Theme.S(8), 0, Theme.S(8), Theme.S(10)) };
+    readonly Panel header = new() { Dock = DockStyle.Top, Height = Theme.S(48), Cursor = Cursors.SizeAll };
     readonly TextBox title = new() { BorderStyle = BorderStyle.None, ForeColor = Theme.Ink, Font = Theme.Title };
-    readonly Label count = new() { AutoSize = false, Font = Theme.Small, ForeColor = Theme.Muted };
-    readonly Panel footer = new() { Dock = DockStyle.Bottom, Height = 30, Cursor = Cursors.SizeNWSE };
-    readonly Label status = new() { AutoEllipsis = true, Font = Theme.Small, ForeColor = Theme.Muted, TextAlign = ContentAlignment.MiddleLeft };
-    readonly SoftButton add = new() { Name = "NewBoxButton", Text = "+ New box", AccessibleName = "Create a new box" };
-    readonly SoftButton options = new() { Text = "···", AccessibleName = "Box options" };
+    readonly GhostButton options = new() { Glyph = '', AccessibleName = "Box options" };
+    /// <summary>Invisible bottom-right resize handle; shows faint dots on hover.</summary>
+    readonly Grip grip = new() { Cursor = Cursors.SizeNWSE, Size = new Size(Theme.S(18), Theme.S(18)) };
+    /// <summary>Only shown for transient messages (saving, errors); the box is otherwise label-free.</summary>
+    readonly Label status = new() { AutoSize = false, AutoEllipsis = true, Font = Theme.Small, ForeColor = Theme.Muted, TextAlign = ContentAlignment.MiddleLeft, Visible = false };
     readonly ContextMenuStrip menu = Menus.Create(Color.SteelBlue);
     readonly SwatchRow swatches = new();
     readonly ToolTip tips = new() { InitialDelay = 400, AutoPopDelay = 6000 };
@@ -52,17 +58,17 @@ public sealed class Box : Form
         this.owner = owner; State = state; Text = state.Name;
         AutoScaleMode = AutoScaleMode.None; FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual; MinimumSize = new Size(240, 192);
-        DoubleBuffered = true; Padding = new Padding(1); Font = Theme.Body;
+        DoubleBuffered = true; Font = Theme.Body;
         Bounds = Home; // Boxes.FitToScreens relocates it if this spot is off the current monitors.
-        Controls.Add(items); Controls.Add(footer); Controls.Add(header);
-        header.Controls.AddRange([title, count, add, options]); footer.Controls.Add(status);
+        Controls.Add(items); Controls.Add(header); Controls.Add(grip); Controls.Add(status);
+        grip.BringToFront(); status.BringToFront();
+        header.Controls.AddRange([title, options]);
         title.Text = state.Name; title.AccessibleName = "Box title";
         title.Leave += (_, _) => { State.Name = title.Text; Text = title.Text; owner.Save(); };
         title.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { items.Focus(); e.SuppressKeyPress = true; } };
-        add.Click += (_, _) => owner.Add(); options.Click += (_, _) => menu.Show(options, new Point(0, options.Height + 6));
-        tips.SetToolTip(add, "Create a new box"); tips.SetToolTip(options, "Colours and box options");
+        options.Click += (_, _) => menu.Show(options, new Point(options.Width - menu.Width, options.Height + Theme.S(6)));
+        tips.SetToolTip(options, "Colours and box options");
         tips.SetToolTip(header, "Drag to move · boxes snap to the grid");
-        tips.SetToolTip(footer, "Drag to resize");
         swatches.Picked += colour => { State.Colour = colour.ToArgb(); Recolour(); owner.Save(); };
         menu.Opening += (_, _) => swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour));
         menu.Items.AddRange([
@@ -77,8 +83,8 @@ public sealed class Box : Form
                 if (owner.Busy) { SetMessage("Let your items finish saving first"); return; }
                 owner.Windows.Remove(this); owner.Save(); Close();
             }, danger: true), Menus.Spacer()]);
-        foreach (var c in new Control[] { this, header, count, items, footer }) c.ContextMenuStrip = menu;
-        foreach (var c in new Control[] { header, count })
+        foreach (var c in new Control[] { this, header, items, grip }) c.ContextMenuStrip = menu;
+        foreach (var c in new Control[] { header })
         {
             c.MouseDown += (_, e) =>
             {
@@ -93,25 +99,12 @@ public sealed class Box : Form
             };
             c.MouseUp += (_, _) => { if (!Moving) return; c.Capture = false; grid?.Close(); grid = null; Snap(); Moving = false; };
         }
-        footer.MouseDown += (_, e) =>
+        grip.MouseDown += (_, e) =>
         {
             if (e.Button != MouseButtons.Left) return;
             Moving = true; Native.ReleaseCapture(); Native.SendMessage(Handle, 0xA1, 17, 0); Snap(); Moving = false;
         };
-        header.Paint += (_, e) =>
-        {
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            using var brush = new SolidBrush(accent);
-            e.Graphics.FillEllipse(brush, 17, 20, 7, 7);
-            using var pen = new Pen(Color.FromArgb(28, accent));
-            e.Graphics.DrawLine(pen, 16, header.Height - 1, header.Width - 16, header.Height - 1);
-        };
-        footer.Paint += (_, e) =>
-        {
-            using var pen = new Pen(Color.FromArgb(90, Theme.Muted));
-            for (int i = 0; i < 3; i++) e.Graphics.DrawLine(pen, footer.Width - 10 - i * 4, footer.Height - 8, footer.Width - 8, footer.Height - 10 - i * 4);
-        };
-        foreach (var c in new Control[] { this, items, header, footer }) EnableDrop(c);
+        foreach (var c in new Control[] { this, items, header }) EnableDrop(c);
         Recolour(); RefreshItems(); LayoutChrome();
     }
 
@@ -122,12 +115,12 @@ public sealed class Box : Form
         {
             var valid = !owner.Busy && e.Data?.GetDataPresent(DataFormats.FileDrop) == true && (e.AllowedEffect & DragDropEffects.Copy) != 0;
             e.Effect = valid ? DragDropEffects.Copy : DragDropEffects.None;
-            draggingOver = valid; Invalidate();
+            draggingOver = valid; ApplyBorder(); Invalidate();
         };
-        control.DragLeave += (_, _) => { draggingOver = false; Invalidate(); };
+        control.DragLeave += (_, _) => { draggingOver = false; ApplyBorder(); Invalidate(); };
         control.DragDrop += async (_, e) =>
         {
-            draggingOver = false; Invalidate();
+            draggingOver = false; ApplyBorder(); Invalidate();
             if (e.Data?.GetData(DataFormats.FileDrop) is string[] paths) await owner.ImportItemsAsync(this, paths);
         };
     }
@@ -135,48 +128,44 @@ public sealed class Box : Form
     protected override void OnSizeChanged(EventArgs e)
     {
         base.OnSizeChanged(e);
-        if (Width < 32 || Height < 32) return;
-        using var path = Theme.Round(new RectangleF(0, 0, Width, Height), 16);
-        var old = Region; Region = new Region(path); old?.Dispose();
         if (title != null) LayoutChrome();
         Invalidate();
     }
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        // Windows 11 draws smooth, anti-aliased rounded corners and a hairline border; older Windows keeps square corners.
+        int round = 2; Native.DwmSetWindowAttribute(Handle, 33, ref round, 4); ApplyBorder();
+    }
+    void ApplyBorder() { if (!IsHandleCreated) return; int colour = ColorTranslator.ToWin32(draggingOver ? accent : Theme.Mix(BackColor, accent, .28f)); Native.DwmSetWindowAttribute(Handle, 34, ref colour, 4); }
     void LayoutChrome()
     {
-        bool compact = ClientSize.Width < 340;
-        int addWidth = compact ? 34 : 96;
-        add.Text = compact ? "+" : "+ New box";
-        options.Bounds = new Rectangle(header.Width - 47, 14, 32, 30);
-        add.Bounds = new Rectangle(options.Left - addWidth - 6, 14, addWidth, 30);
-        title.Bounds = new Rectangle(33, 14, Math.Max(36, add.Left - 43), 24);
-        count.Bounds = new Rectangle(33, 39, Math.Max(36, header.Width - 60), 16);
-        status.Bounds = new Rectangle(16, 0, Math.Max(10, footer.Width - 44), 26);
+        int pad = Theme.S(16), button = Theme.S(30);
+        options.Bounds = new Rectangle(header.Width - Theme.S(10) - button, (header.Height - button) / 2 + Theme.S(2), button, button);
+        int titleHeight = title.PreferredHeight;
+        title.Bounds = new Rectangle(pad, (header.Height - titleHeight) / 2 + Theme.S(2), Math.Max(Theme.S(40), options.Left - pad - Theme.S(8)), titleHeight);
+        grip.Location = new Point(ClientSize.Width - grip.Width, ClientSize.Height - grip.Height);
+        status.Bounds = new Rectangle(pad, ClientSize.Height - Theme.S(26), Math.Max(10, ClientSize.Width - pad * 2 - grip.Width), Theme.S(20));
     }
     protected override void OnPaint(PaintEventArgs e)
     {
-        base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var path = Theme.Round(new RectangleF(0.5f, 0.5f, Width - 1, Height - 1), 16);
-        using var pen = new Pen(draggingOver ? accent : Theme.Mix(BackColor, accent, .34f), draggingOver ? 3 : 1);
-        e.Graphics.DrawPath(pen, path);
+        base.OnPaint(e); if (!draggingOver) return;
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var path = Theme.Round(new RectangleF(1, 1, Width - 3, Height - 3), Theme.S(8));
+        using var pen = new Pen(accent, Theme.S(2)); e.Graphics.DrawPath(pen, path);
     }
     void Recolour()
     {
         accent = Theme.Mix(Color.FromArgb(State.Colour), Color.White, .15f);
-        BackColor = Theme.Mix(Color.FromArgb(21, 25, 34), accent, .10f);
-        header.BackColor = title.BackColor = Theme.Mix(BackColor, accent, .055f);
-        items.BackColor = footer.BackColor = BackColor; items.Accent = accent;
-        add.Accent = options.Accent = accent;
+        BackColor = Theme.Mix(Theme.Card, accent, .07f);
+        header.BackColor = title.BackColor = items.BackColor = status.BackColor = grip.BackColor = options.BackColor = BackColor;
+        items.Accent = options.Accent = grip.Accent = accent;
         foreach (var tile in items.Controls.OfType<ItemTile>()) { tile.Accent = accent; if (tile.ContextMenuStrip != null) Menus.SetAccent(tile.ContextMenuStrip, accent); }
-        Menus.SetAccent(menu, accent);
+        Menus.SetAccent(menu, accent); ApplyBorder();
         Invalidate(true);
     }
     internal void SetMessage(string? text) { message = text; UpdateStatus(); }
-    void UpdateStatus()
-    {
-        count.Text = State.Items.Count == 1 ? "1 item" : $"{State.Items.Count} items";
-        status.Text = message ?? (State.Items.Count == 0 ? "Your desktop, a little calmer." : "Saved in Boxes");
-        tips.SetToolTip(status, message ?? "Independent copies · originals can be removed from the desktop");
-    }
+    void UpdateStatus() { status.Text = message ?? ""; status.Visible = message != null; if (message != null) status.BringToFront(); }
     void Snap()
     {
         var area = Screen.FromControl(this).WorkingArea;
@@ -199,7 +188,7 @@ public sealed class Box : Form
                 try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
                 catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException) { SetMessage("Couldn't open this item. Check its saved file."); }
             };
-            tips.SetToolTip(tile, name + (owner.Library.Contains(path) ? "\nSaved in Boxes" : "\nOriginal unavailable — drop it again to save a copy"));
+            tips.SetToolTip(tile, owner.Library.Contains(path) ? name : name + "\nOriginal unavailable — drop it again to save a copy");
             var itemMenu = Menus.Create(accent);
             itemMenu.Items.AddRange([
                 Menus.Spacer(), Menus.Item("Open", Menus.Icons.Open, () => tile.PerformClick()),
@@ -215,15 +204,14 @@ public sealed class Box : Form
     internal void RenderPreview()
     {
         // Exercise both populated and compact layouts without touching the user's library.
-        State.Name = "Everyday"; title.Text = "Everyday"; Size = new Size(432, 336);
+        State.Name = "Everyday"; title.Text = "Everyday"; Size = new Size(Theme.S(480), Theme.S(288));
         var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-        foreach (var sample in new[] { ("Project notes", Path.Combine(windows, "notepad.exe")), ("Design files", windows), ("Terminal", Path.Combine(windows, "System32", "cmd.exe")), ("Quick links", Path.Combine(windows, "explorer.exe")) })
+        foreach (var sample in new[] { ("Project notes", Path.Combine(windows, "notepad.exe")), ("Design files", windows), ("Terminal", Path.Combine(windows, "System32", "cmd.exe")), ("Quick links", Path.Combine(windows, "explorer.exe")), ("Warhammer 40,000 Dawn of War - Definitive Edition", Path.Combine(windows, "System32", "mmc.exe")) })
         {
             var tile = new ItemTile { Text = sample.Item1, Accent = accent, Image = ShellImage.Load(sample.Item2) };
             tile.Disposed += (_, _) => tile.Image?.Dispose(); items.Controls.Add(tile);
         }
-        count.Text = "4 items"; status.Text = "Saved in Boxes";
-        PerformLayout(); LayoutChrome();
+       PerformLayout(); LayoutChrome();
         var output = Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR");
         if (output != null)
         {
@@ -231,7 +219,7 @@ public sealed class Box : Form
             using var bitmap = new Bitmap(Width, Height); DrawToBitmap(bitmap, ClientRectangle); bitmap.Save(Path.Combine(output, "boxes-populated.png"));
             swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour)); Menus.RenderPreview(menu, Path.Combine(output, "menu-box.png"), 3);
             foreach (Control c in items.Controls.Cast<Control>().ToArray()) c.Dispose();
-            Size = new Size(288, 240); count.Text = "0 items"; status.Text = "Your desktop, a little calmer."; PerformLayout(); LayoutChrome();
+            Size = new Size(Theme.S(288), Theme.S(240)); PerformLayout(); LayoutChrome();
             using var empty = new Bitmap(Width, Height); DrawToBitmap(empty, ClientRectangle); empty.Save(Path.Combine(output, "boxes-compact.png"));
         }
     }
@@ -255,13 +243,53 @@ internal sealed class TilePanel : FlowLayoutPanel
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e); if (Controls.Count != 0) return;
+        // Empty state: a soft dashed drop zone with one quiet line of text.
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        int x = ClientSize.Width / 2, y = Math.Max(28, ClientSize.Height / 2 - 26);
-        using var pen = new Pen(Color.FromArgb(130, Accent), 1.5f);
-        using var outline = Theme.Round(new RectangleF(x - 19, y - 18, 38, 34), 8);
-        e.Graphics.DrawPath(pen, outline); e.Graphics.DrawLine(pen, x - 6, y - 1, x + 6, y - 1); e.Graphics.DrawLine(pen, x, y - 7, x, y + 5);
-        TextRenderer.DrawText(e.Graphics, "Drop icons here", Theme.Body, new Rectangle(0, y + 28, Width, 22), Theme.Ink, TextFormatFlags.HorizontalCenter);
-        TextRenderer.DrawText(e.Graphics, "Kept safe in this box", Theme.Small, new Rectangle(0, y + 52, Width, 20), Theme.Muted, TextFormatFlags.HorizontalCenter);
+        var zone = new RectangleF(Padding.Left + .5f, Theme.S(2) + .5f, ClientSize.Width - Padding.Horizontal - 1, ClientSize.Height - Padding.Bottom - Theme.S(2) - 1);
+        if (zone.Width < 20 || zone.Height < 20) return;
+        using var pen = new Pen(Theme.Mix(BackColor, Accent, .35f), Math.Max(1, Theme.Scale)) { DashPattern = [4, 3] };
+        using var outline = Theme.Round(zone, Theme.S(10)); e.Graphics.DrawPath(pen, outline);
+        TextRenderer.DrawText(e.Graphics, "Drop icons here", Theme.Body, Rectangle.Round(zone), Theme.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+    }
+}
+
+/// <summary>Borderless icon button: invisible until hovered, like a modern web toolbar.</summary>
+internal sealed class GhostButton : Control
+{
+    internal char Glyph; internal Color Accent = Color.SteelBlue;
+    bool hover;
+    internal GhostButton() { SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.SupportsTransparentBackColor, true); Cursor = Cursors.Hand; TabStop = true; }
+    protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnKeyDown(KeyEventArgs e) { if (e.KeyCode is Keys.Enter or Keys.Space) OnClick(e); base.OnKeyDown(e); }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.Clear(BackColor); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        if (hover || Focused)
+        {
+            using var path = Theme.Round(new RectangleF(0, 0, Width - 1, Height - 1), Theme.S(7));
+            using var fill = new SolidBrush(Theme.Mix(BackColor, Accent, .22f)); e.Graphics.FillPath(fill, path);
+        }
+        using var glyph = Menus.Glyph(Glyph, hover ? Theme.Ink : Theme.Muted, Theme.S(16));
+        e.Graphics.DrawImage(glyph, (Width - glyph.Width) / 2, (Height - glyph.Height) / 2);
+    }
+}
+
+/// <summary>Resize handle in the bottom-right corner; three faint dots appear on hover.</summary>
+internal sealed class Grip : Control
+{
+    internal Color Accent = Color.SteelBlue;
+    bool hover;
+    internal Grip() { SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true); }
+    protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.Clear(BackColor); if (!hover) return;
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var dot = new SolidBrush(Theme.Mix(BackColor, Theme.Ink, .45f)); float d = Theme.S(2) + 1, step = Theme.S(4);
+        foreach (var (x, y) in new[] { (2, 0), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2) })
+            e.Graphics.FillEllipse(dot, Width - Theme.S(6) - (2 - x) * step - d / 2, Height - Theme.S(6) - (2 - y) * step - d / 2, d, d);
     }
 }
 
@@ -283,18 +311,23 @@ internal class SoftButton : Button
 }
 internal sealed class ItemTile : SoftButton
 {
-    internal ItemTile() { Size = new Size(92, 94); Margin = new Padding(4); }
+    static readonly int LineHeight = TextRenderer.MeasureText("Ag", Theme.Label, Size.Empty, TextFormatFlags.NoPadding).Height;
+    internal ItemTile() { Size = new Size(Theme.S(88), Theme.S(18) + Theme.S(32) + Theme.S(8) + LineHeight * 2); Margin = new Padding(Theme.S(2)); }
     protected override void OnPaint(PaintEventArgs e)
     {
-        e.Graphics.Clear(Parent?.BackColor ?? BackColor); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        var back = Parent?.BackColor ?? BackColor;
+        e.Graphics.Clear(back); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         if (Hover || Focused)
         {
-            using var path = Theme.Round(new RectangleF(0.5f, 0.5f, Width - 1, Height - 1), 10);
-            using var brush = new SolidBrush(Theme.Mix(Parent?.BackColor ?? BackColor, Accent, .15f)); e.Graphics.FillPath(brush, path);
-            if (Focused) { using var pen = new Pen(Color.FromArgb(160, Accent)); e.Graphics.DrawPath(pen, path); }
+            using var path = Theme.Round(new RectangleF(0, 0, Width - 1, Height - 1), Theme.S(8));
+            using var brush = new SolidBrush(Theme.Mix(back, Accent, Hover ? .16f : .1f)); e.Graphics.FillPath(brush, path);
         }
-        if (Image != null) e.Graphics.DrawImage(Image, new Rectangle((Width - 32) / 2, 10, 32, 32));
-        TextRenderer.DrawText(e.Graphics, Text, Theme.Body, new Rectangle(3, 51, Width - 6, 37), Theme.Ink, TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
+        int icon = Theme.S(32), top = Theme.S(8);
+        if (Image != null) { e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic; e.Graphics.DrawImage(Image, new Rectangle((Width - icon) / 2, top, icon, icon)); }
+        // Two lines at most; TextBoxControl drops a partially visible third line and EndEllipsis marks the cut.
+        var text = new Rectangle(Theme.S(4), top + icon + Theme.S(6), Width - Theme.S(8), LineHeight * 2);
+        TextRenderer.DrawText(e.Graphics, Text, Theme.Label, text, Hover ? Theme.Ink : Theme.Mix(back, Theme.Ink, .88f),
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPadding);
     }
 }
 internal static class ShellImage

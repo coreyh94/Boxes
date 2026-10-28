@@ -47,8 +47,8 @@ public sealed class Boxes : ApplicationContext
                     if (test.State.Items.Count != 1 || !File.ReadAllText(test.State.Items[0]).Contains("URL=https://example.com/"))
                         throw new InvalidOperationException("Imported tile did not survive desktop deletion");
                     if (test.Controls.Count < 3) throw new InvalidOperationException("Layout missing");
-                    ((Button)test.Controls.Find("NewBoxButton", true).Single()).PerformClick();
-                    if (Windows.Count != 2 || Windows[0].Bounds.IntersectsWith(Windows[1].Bounds)) throw new InvalidOperationException("New box control failed");
+                    Add();
+                    if (Windows.Count != 2 || Windows[0].Bounds.IntersectsWith(Windows[1].Bounds)) throw new InvalidOperationException("New box failed");
                     test.State.Items.Clear(); test.RefreshItems(); test.RenderPreview();
                     if (Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR") is { } previews) { SettingsWindow.RenderPreview(this, previews); using var trayMenu = TrayMenu(); Menus.RenderPreview(trayMenu, Path.Combine(previews, "menu-tray.png"), 3); }
                 }
