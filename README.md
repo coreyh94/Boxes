@@ -2,13 +2,27 @@
 
 A native Windows 11 desktop organiser using .NET 10 Windows Forms. No browser engine, network service, or third-party packages.
 
+## Download
+
+Get `Boxes-<version>-win-x64.exe` from the [latest release](https://github.com/coreyh94/Boxes/releases/latest). It is a single self-contained file for 64-bit Windows 10/11 with nothing else to install. Move it somewhere permanent (for example `%LOCALAPPDATA%\Programs\Boxes`) before the first run, because Boxes registers that path to start with Windows.
+
+The exe is not code-signed, so Windows SmartScreen may show "Windows protected your PC". Choose **More info › Run anyway**.
+
+When a box would cover desktop icons, Boxes moves the icons into free space. To do that it turns off the desktop's **Auto arrange icons** and **Align icons to grid** settings, which stay off after Boxes exits.
+
 ## Build and run
 
-Install the .NET 10 Desktop Runtime for published builds, or the SDK to build:
+Install the .NET 10 SDK to build. Published builds of this kind need the .NET 10 Desktop Runtime:
 
 ```powershell
 dotnet publish DesktopBoxes -c Release -o dist
 .\dist\DesktopBoxes.exe
+```
+
+To make a self-contained single-file release like the download:
+
+```powershell
+dotnet publish DesktopBoxes -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o release\win-x64
 ```
 
 ## Controls
