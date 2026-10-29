@@ -14,6 +14,9 @@ public class State
     public int X { get; set; } = 48; public int Y { get; set; } = 48;
     public int Width { get; set; } = 384; public int Height { get; set; } = 288;
     public int Colour { get; set; } = SwatchRow.Palette[0].Colour.ToArgb();
+    /// <summary>Sticky, Pastel or Dark (see <see cref="BoxStyle"/>); unknown or missing means Sticky.</summary>
+    public string Style { get; set; } = nameof(BoxStyle.Sticky);
+    internal BoxStyle Look { get => Enum.TryParse<BoxStyle>(Style, out var s) ? s : BoxStyle.Sticky; set => Style = value.ToString(); }
     /// <summary>Window opacity in percent (30–100); null follows the default in Settings.</summary>
     public int? Opacity { get; set; }
     public List<string> Items { get; set; } = [];

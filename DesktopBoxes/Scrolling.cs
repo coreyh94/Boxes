@@ -105,7 +105,7 @@ internal sealed class ScrollThumb : Control
         var r = ThumbRect;
         using var path = Round(new RectangleF(r.X, r.Y, r.Width, r.Height), r.Width / 2f);
         float strength = dragging ? .6f : hover ? .5f : awake ? .4f : .22f;
-        using var brush = new SolidBrush(Mix(BackColor, Mix(Ink, Accent, .35f), strength)); e.Graphics.FillPath(brush, path);
+        using var brush = new SolidBrush(Mix(BackColor, Mix(InkOn(BackColor), Accent, .35f), strength)); e.Graphics.FillPath(brush, path);
     }
     protected override void Dispose(bool disposing) { if (disposing) sleep.Dispose(); base.Dispose(disposing); }
 }

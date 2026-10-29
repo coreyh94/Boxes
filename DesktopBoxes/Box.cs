@@ -24,6 +24,22 @@ internal static class Theme
     /// swatch's saturation (capped) so boxes sit calmly together. Blending into <see cref="Card"/> instead washes every colour towards grey.
     /// </summary>
     internal static Color Tint(Color swatch) => FromHsl(swatch.GetHue(), Math.Min(.45f, swatch.GetSaturation() * .5f), .23f);
+    /// <summary>Body and title-strip colours for a swatch. Sticky note and Pastel are light cards with a slightly deeper title strip.</summary>
+    internal static (Color Body, Color Header) Surface(Color swatch, BoxStyle style)
+    {
+        float hue = swatch.GetHue(), sat = swatch.GetSaturation();
+        return style switch
+        {
+            BoxStyle.Sticky => (FromHsl(hue, Math.Min(1, sat * 1.2f), .83f), FromHsl(hue, Math.Min(.95f, sat * 1.2f), .76f)),
+            BoxStyle.Pastel => (FromHsl(hue, Math.Min(.85f, sat), .91f), FromHsl(hue, Math.Min(.75f, sat), .85f)),
+            _ => (Tint(swatch), Tint(swatch)),
+        };
+    }
+    internal static readonly Color DarkInk = Color.FromArgb(32, 33, 36), DarkMuted = Color.FromArgb(78, 84, 96);
+    internal static bool IsLight(Color c) => .2126f * c.R + .7152f * c.G + .0722f * c.B > 140;
+    /// <summary>Text colour for a surface: dark on light boxes, light on dark ones (and in menus).</summary>
+    internal static Color InkOn(Color back) => IsLight(back) ? DarkInk : Ink;
+    internal static Color MutedOn(Color back) => IsLight(back) ? DarkMuted : Muted;
     static Color FromHsl(float hue, float saturation, float lightness)
     {
         float c = (1 - Math.Abs(2 * lightness - 1)) * saturation, h = hue / 60, x = c * (1 - Math.Abs(h % 2 - 1)), m = lightness - c / 2;
@@ -37,6 +53,8 @@ internal static class Theme
         p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90); p.AddArc(r.Left, r.Bottom - d, d, d, 90, 90); p.CloseFigure(); return p;
     }
 }
+
+internal enum BoxStyle { Sticky, Pastel, Dark }
 
 public sealed class Box : Form
 {
@@ -60,7 +78,8 @@ public sealed class Box : Form
     readonly SwatchRow swatches = new();
     readonly OpacityRow opacity = new();
     readonly ToolTip tips = new() { InitialDelay = 400, AutoPopDelay = 6000 };
-    Color accent;
+    /// <summary>Highlights inside the box (darker on light boxes); <see cref="menuAccent"/> suits the dark menus.</summary>
+    Color accent, menuAccent;
     Point drag;
     Grid? grid;
     bool draggingOver;
@@ -92,6 +111,7 @@ public sealed class Box : Form
         var changePhoto = Menus.Item("Change photo…", Menus.Icons.Photo, () => _ = owner.ChangePhotoAsync(this));
         var nextPhoto = Menus.Item("Next photo", Menus.Icons.Next, () => _ = reel?.NextAsync());
         var changeFolder = Menus.Item("Change folder…", Menus.Icons.Folder, () => owner.ChangeFolder(this));
+        style = Menus.Submenu("Style", Menus.Icons.Style, [.. Looks.Select(l => (l.Label, (Action)(() => { State.Look = l.Style; Recolour(); owner.Save(); })))]);
         interval = Menus.Submenu("Change photo every", Menus.Icons.Timer, [.. Intervals.Select(i => (i.Label, (Action)(() => SetInterval(i.Seconds))))]);
         var titleBar = Menus.Item("Hide title bar", Menus.Icons.Hide, () => SetTitleHidden(!State.HideTitle));
         var rename = Menus.Item("Rename", Menus.Icons.Rename, () => { title.Focus(); title.SelectAll(); });
@@ -102,12 +122,13 @@ public sealed class Box : Form
             swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour)); opacity.Value = State.Opacity ?? owner.Settings.BoxOpacity;
             changePhoto.Visible = State.Photo != null; nextPhoto.Visible = changeFolder.Visible = interval.Visible = State.PhotoFolder != null;
             Menus.Tick(interval, Array.FindIndex(Intervals, i => i.Seconds == State.SlideSeconds));
+            Menus.Tick(style, Array.FindIndex(Looks, l => l.Style == State.Look));
             titleBar.Text = State.HideTitle ? "Show title bar" : "Hide title bar"; rename.Visible = !State.HideTitle;
             paste.Visible = State.Photo == null && State.PhotoFolder == null && CanPaste;
             titleBar.Image?.Dispose(); titleBar.Image = Menus.Glyph(State.HideTitle ? Menus.Icons.Show : Menus.Icons.Hide, Theme.Muted);
         };
         menu.Items.AddRange([
-            Menus.Spacer(), swatches, opacity, Menus.Separator(),
+            Menus.Spacer(), swatches, opacity, style, Menus.Separator(),
             paste, changePhoto, nextPhoto, changeFolder, interval, titleBar,
             Menus.Item("New box", Menus.Icons.Add, () => owner.Add()),
             Menus.Item("New photo box…", Menus.Icons.Photo, () => _ = owner.AddPhotoBoxAsync()),
@@ -168,6 +189,8 @@ public sealed class Box : Form
     }
     static readonly (int Seconds, string Label)[] Intervals = [(10, "10 seconds"), (20, "20 seconds"), (60, "1 minute"), (300, "5 minutes")];
     readonly ToolStripMenuItem interval;
+    static readonly (BoxStyle Style, string Label)[] Looks = [(BoxStyle.Sticky, "Sticky note"), (BoxStyle.Pastel, "Pastel"), (BoxStyle.Dark, "Dark")];
+    readonly ToolStripMenuItem style;
     internal void SetInterval(int seconds) { State.SlideSeconds = seconds; reel?.SetInterval(seconds); owner.Save(); }
     internal void SetTitleHidden(bool hidden) { State.HideTitle = hidden; LayoutChrome(); owner.Save(); }
     internal bool TitleShown => header.Visible;
@@ -298,12 +321,16 @@ public sealed class Box : Form
     {
         // Before 1.2.0 new boxes defaulted to SteelBlue, which isn't in the palette; give them Ocean so the swatch menu shows a choice.
         if (State.Colour == Color.SteelBlue.ToArgb()) State.Colour = SwatchRow.Palette[0].Colour.ToArgb();
-        accent = Theme.Mix(Color.FromArgb(State.Colour), Color.White, .15f);
-        BackColor = Theme.Tint(Color.FromArgb(State.Colour));
-        header.BackColor = title.BackColor = scroller.BackColor = items.BackColor = status.BackColor = grip.BackColor = options.BackColor = photo.BackColor = BackColor; photo.Accent = accent; photo.Invalidate();
-        items.Accent = options.Accent = grip.Accent = scroller.Accent = opacity.Accent = accent;
-        foreach (var tile in items.Controls.OfType<ItemTile>()) { tile.Accent = accent; if (tile.ContextMenuStrip != null) Menus.SetAccent(tile.ContextMenuStrip, accent); }
-        Menus.SetAccent(menu, accent); Menus.SetAccent((ContextMenuStrip)interval.DropDown, accent); ApplyBorder();
+        var swatch = Color.FromArgb(255, Color.FromArgb(State.Colour)); var (body, strip) = Theme.Surface(swatch, State.Look);
+        menuAccent = Theme.Mix(swatch, Color.White, .15f);
+        accent = Theme.IsLight(body) ? Theme.Mix(swatch, Color.Black, .4f) : menuAccent;
+        BackColor = body;
+        scroller.BackColor = items.BackColor = status.BackColor = grip.BackColor = photo.BackColor = body;
+        header.BackColor = title.BackColor = options.BackColor = strip;
+        title.ForeColor = Theme.InkOn(strip); status.ForeColor = Theme.MutedOn(body); photo.Accent = accent; photo.Invalidate();
+        items.Accent = options.Accent = grip.Accent = scroller.Accent = accent; opacity.Accent = menuAccent;
+        foreach (var tile in items.Controls.OfType<ItemTile>()) { tile.Accent = accent; if (tile.ContextMenuStrip != null) Menus.SetAccent(tile.ContextMenuStrip, menuAccent); }
+        Menus.SetAccent(menu, menuAccent); Menus.SetAccent((ContextMenuStrip)interval.DropDown, menuAccent); Menus.SetAccent((ContextMenuStrip)style.DropDown, menuAccent); ApplyBorder();
         Invalidate(true);
     }
     internal void SetMessage(string? text) { message = text; UpdateStatus(); }
@@ -319,7 +346,7 @@ public sealed class Box : Form
     /// <summary>Right-click menu for an item: the usual Explorer verbs, acting on the saved copy.</summary>
     ContextMenuStrip ItemMenu(ItemTile tile, string path, Action open)
     {
-        var menu = Menus.Create(accent);
+        var menu = Menus.Create(menuAccent);
         static ToolStripMenuItem Keyed(ToolStripMenuItem item, string keys) { item.ShortcutKeyDisplayString = keys; return item; }
         bool saved = owner.Library.Contains(path), program = Runnable.Contains(Path.GetExtension(path).ToLowerInvariant());
         var openWith = Menus.Item("Open with…", Menus.Icons.OpenWith, () => Run("rundll32.exe", "shell32.dll,OpenAs_RunDLL " + path));
@@ -436,7 +463,7 @@ public sealed class Box : Form
     {
         if (owner.Busy || tile.IsDisposed) return;
         bool hidden = IsLink(path) || Path.GetExtension(path).Equals(".url", StringComparison.OrdinalIgnoreCase);
-        var editor = new TextBox { Text = tile.Text, Font = Theme.Label, BorderStyle = BorderStyle.FixedSingle, BackColor = Theme.Mix(BackColor, Color.Black, .35f), ForeColor = Theme.Ink, TextAlign = HorizontalAlignment.Center };
+        var editor = new TextBox { Text = tile.Text, Font = Theme.Label, BorderStyle = BorderStyle.FixedSingle, BackColor = Theme.IsLight(BackColor) ? Color.White : Theme.Mix(BackColor, Color.Black, .35f), ForeColor = Theme.InkOn(Theme.IsLight(BackColor) ? Color.White : BackColor), TextAlign = HorizontalAlignment.Center };
         var at = PointToClient(tile.PointToScreen(Point.Empty));
         editor.Bounds = new Rectangle(at.X - Theme.S(6), at.Y + Theme.S(44), tile.Width + Theme.S(12), editor.PreferredHeight);
         Controls.Add(editor); editor.BringToFront(); Activate(); editor.Focus();
@@ -591,7 +618,7 @@ internal sealed class TilePanel : FlowLayoutPanel
         if (zone.Width < 20 || zone.Height < 20) return;
         using var pen = new Pen(Theme.Mix(BackColor, Accent, .35f), Math.Max(1, Theme.Scale)) { DashPattern = [4, 3] };
         using var outline = Theme.Round(zone, Theme.S(10)); e.Graphics.DrawPath(pen, outline);
-        TextRenderer.DrawText(e.Graphics, "Drop icons here", Theme.Body, Rectangle.Round(zone), Theme.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        TextRenderer.DrawText(e.Graphics, "Drop icons here", Theme.Body, Rectangle.Round(zone), Theme.MutedOn(BackColor), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
     }
 }
 
@@ -612,7 +639,7 @@ internal sealed class GhostButton : Control
             using var path = Theme.Round(new RectangleF(0, 0, Width - 1, Height - 1), Theme.S(7));
             using var fill = new SolidBrush(Theme.Mix(BackColor, Accent, .22f)); e.Graphics.FillPath(fill, path);
         }
-        using var glyph = Menus.Glyph(Glyph, hover ? Theme.Ink : Theme.Muted, Theme.S(16));
+        using var glyph = Menus.Glyph(Glyph, hover ? Theme.InkOn(BackColor) : Theme.MutedOn(BackColor), Theme.S(16));
         e.Graphics.DrawImage(glyph, (Width - glyph.Width) / 2, (Height - glyph.Height) / 2);
     }
 }
@@ -629,7 +656,7 @@ internal sealed class Grip : Control
     {
         e.Graphics.Clear(BackColor); if (!hover) return;
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var dot = new SolidBrush(Theme.Mix(BackColor, Theme.Ink, .45f)); float d = Theme.S(2) + 1, step = Theme.S(4);
+        using var dot = new SolidBrush(Theme.Mix(BackColor, Theme.InkOn(BackColor), .45f)); float d = Theme.S(2) + 1, step = Theme.S(4);
         foreach (var (x, y) in new[] { (2, 0), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2) })
             e.Graphics.FillEllipse(dot, Width - Theme.S(6) - (2 - x) * step - d / 2, Height - Theme.S(6) - (2 - y) * step - d / 2, d, d);
     }
@@ -678,7 +705,7 @@ internal sealed class ItemTile : SoftButton
         }
         // Two lines at most; TextBoxControl drops a partially visible third line and EndEllipsis marks the cut.
         var text = new Rectangle(Theme.S(4), top + icon + Theme.S(6), Width - Theme.S(8), LineHeight * 2);
-        TextRenderer.DrawText(e.Graphics, Text, Theme.Label, text, Ghost ? Theme.Mix(back, Theme.Ink, .3f) : Hover || Selected ? Theme.Ink : Theme.Mix(back, Theme.Ink, .88f),
+        TextRenderer.DrawText(e.Graphics, Text, Theme.Label, text, Ghost ? Theme.Mix(back, Theme.InkOn(back), .3f) : Hover || Selected ? Theme.InkOn(back) : Theme.Mix(back, Theme.InkOn(back), .88f),
             TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPadding);
     }
 }

@@ -75,7 +75,7 @@ internal sealed class PhotoPanel : Control
         if (photo == null)
         {
             using var pen = new Pen(Mix(BackColor, Accent, .35f), Math.Max(1, Theme.Scale)) { DashPattern = [4, 3] }; g.DrawPath(pen, path);
-            TextRenderer.DrawText(g, Placeholder, Small, Rectangle.Inflate(frame, -S(12), 0), Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak);
+            TextRenderer.DrawText(g, Placeholder, Small, Rectangle.Inflate(frame, -S(12), 0), MutedOn(BackColor), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak);
             return;
         }
         // Cover-crop once per size; resizing re-renders, painting reuses the cache.

@@ -45,7 +45,7 @@ Official releases are built by GitHub Actions instead (`.github/workflows/releas
 ## Controls
 
 - Create a box from **New box** in a box's `⋯` menu or the tray menu, or double-click the tray icon. New boxes go in free grid-aligned space. Boxes are clean cards: an editable title, a `⋯` options button, and your items. Drag the header to move; drag the bottom-right corner to resize. Text and spacing follow Windows display scaling.
-- Click **⋯**, or right-click a title/background, for the colour palette, an opacity slider (30–100%, fading the whole box) and deletion. **Settings…** has a default opacity for new boxes and any box whose own slider you haven't moved.
+- Click **⋯**, or right-click a title/background, for the colour palette, an opacity slider (30–100%, fading the whole box), a **Style** choice (**Sticky note**: bright with dark text, the default; **Pastel**: lighter and softer; **Dark**: the original dark cards) and deletion. **Settings…** has a default opacity for new boxes and any box whose own slider you haven't moved.
 - Right-click an item for **Open**, **Open with…**, **Run as administrator** (programs), **Open file location** (shortcuts), **Show saved file**, **Cut**, **Copy**, **Copy as path**, **Rename** and **Properties**, with the usual shortcuts (Ctrl+X/C/V, Ctrl+Shift+C, F2, Alt+Enter, Del). Copied items paste into other boxes or into File Explorer. Cutting an item and pasting it into a folder moves the file out of the box. To paste into a box, right-click its background or press Ctrl+V.
 - Drag the left edge of a title bar to move; a 48-pixel grid appears and placement snaps on release.
 - Edit the title directly. Drag the bottom edge to resize.
