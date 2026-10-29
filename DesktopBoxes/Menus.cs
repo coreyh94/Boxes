@@ -242,3 +242,40 @@ internal sealed class SliderControl : Control
     protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
     protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
 }
+
+/// <summary>Segmented choice (one of a few labelled options), styled like the rest of Settings. Arrow keys move the choice.</summary>
+internal sealed class ChoiceControl : Control
+{
+    readonly string[] options; int selected, hover = -1;
+    internal Color Accent = Color.FromArgb(0x73, 0x9F, 0xF4);
+    internal event Action<int>? Changed;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal int Selected { get => selected; set { value = Math.Clamp(value, 0, options.Length - 1); if (value != selected) { selected = value; Invalidate(); } } }
+    internal ChoiceControl(string[] options)
+    {
+        this.options = options; Height = S(34); Cursor = Cursors.Hand; TabStop = true; Font = Theme.Body;
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.Selectable, true);
+    }
+    RectangleF Segment(int i) { float w = (Width - S(4) * (options.Length - 1)) / (float)options.Length; return new RectangleF(i * (w + S(4)), 0, w, Height - 1); }
+    int HitTest(Point p) { for (int i = 0; i < options.Length; i++) if (Segment(i).Contains(p)) return i; return -1; }
+    void Pick(int i) { if (i < 0 || i == selected) return; Selected = i; Changed?.Invoke(i); }
+    protected override void OnMouseDown(MouseEventArgs e) { Focus(); if (e.Button == MouseButtons.Left) Pick(HitTest(e.Location)); base.OnMouseDown(e); }
+    protected override void OnMouseMove(MouseEventArgs e) { var h = HitTest(e.Location); if (h != hover) { hover = h; Invalidate(); } base.OnMouseMove(e); }
+    protected override void OnMouseLeave(EventArgs e) { hover = -1; Invalidate(); base.OnMouseLeave(e); }
+    protected override bool IsInputKey(Keys keyData) => keyData is Keys.Left or Keys.Right || base.IsInputKey(keyData);
+    protected override void OnKeyDown(KeyEventArgs e) { if (e.KeyCode is Keys.Left or Keys.Right) { Pick(Math.Clamp(selected + (e.KeyCode == Keys.Right ? 1 : -1), 0, options.Length - 1)); e.Handled = true; } base.OnKeyDown(e); }
+    protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+    protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var back = Parent?.BackColor ?? BackColor; var g = e.Graphics; g.Clear(back); g.SmoothingMode = SmoothingMode.AntiAlias;
+        for (int i = 0; i < options.Length; i++)
+        {
+            var r = Segment(i); bool on = i == selected;
+            using var path = Round(r, S(6));
+            using (var fill = new SolidBrush(Mix(back, on ? Accent : Ink, on ? .32f : i == hover ? .12f : .06f))) g.FillPath(fill, path);
+            if (on) { using var ring = new Pen(Mix(back, Accent, Focused ? .9f : .6f), Math.Max(1, Theme.Scale)); g.DrawPath(ring, path); }
+            TextRenderer.DrawText(g, options[i], Font, Rectangle.Round(r), on ? Ink : Mix(back, Ink, .8f), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        }
+    }
+}

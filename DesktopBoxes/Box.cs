@@ -123,6 +123,7 @@ public sealed class Box : Form
             changePhoto.Visible = State.Photo != null; nextPhoto.Visible = changeFolder.Visible = interval.Visible = State.PhotoFolder != null;
             Menus.Tick(interval, Array.FindIndex(Intervals, i => i.Seconds == State.SlideSeconds));
             Menus.Tick(style, Array.FindIndex(Looks, l => l.Style == State.Look));
+            style.DropDownItems.OfType<ToolStripMenuItem>().First().Text = $"Default ({Styles.First(s => s.Style == owner.Settings.DefaultLook).Label})";
             titleBar.Text = State.HideTitle ? "Show title bar" : "Hide title bar"; rename.Visible = !State.HideTitle;
             paste.Visible = State.Photo == null && State.PhotoFolder == null && CanPaste;
             titleBar.Image?.Dispose(); titleBar.Image = Menus.Glyph(State.HideTitle ? Menus.Icons.Show : Menus.Icons.Hide, Theme.Muted);
@@ -149,15 +150,15 @@ public sealed class Box : Form
             try { Process.Start(new ProcessStartInfo(shown) { UseShellExecute = true }); }
             catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException) { SetMessage("Couldn't open this photo."); }
         };
+        // Photo and slideshow boxes hide the grip (it would cover the picture); their bottom-right corner resizes instead.
+        bool InCorner(Point p) => p.X >= photo.Width - grip.Width && p.Y >= photo.Height - grip.Height;
+        photo.MouseMove += (_, e) => { if (e.Button == MouseButtons.None) photo.Cursor = InCorner(e.Location) ? Cursors.SizeNWSE : Cursors.Default; };
+        photo.MouseDown += (_, e) => { if (e.Button == MouseButtons.Left && InCorner(e.Location)) BeginResize(); };
         EnableMove(header, () => true, immediate: true);
         // Without a title bar, the photo or the empty space between tiles moves the box; a small threshold keeps double-click working.
         EnableMove(photo, () => State.HideTitle, immediate: false);
         EnableMove(items, () => State.HideTitle, immediate: false);
-        grip.MouseDown += (_, e) =>
-        {
-            if (e.Button != MouseButtons.Left) return;
-            Moving = true; Native.ReleaseCapture(); Native.SendMessage(Handle, 0xA1, 17, 0); Snap(); Moving = false;
-        };
+        grip.MouseDown += (_, e) => { if (e.Button == MouseButtons.Left) BeginResize(); };
         foreach (var c in new Control[] { this, scroller, items, header, photo }) EnableDrop(c);
         // Clicking empty space in the box, or anywhere outside it, clears the selection.
         items.MouseDown += (_, _) => { if (SelectedTile != null) Select(null); };
@@ -165,6 +166,7 @@ public sealed class Box : Form
         Recolour(); ApplyOpacity(); RefreshItems(); ShowPhoto(); LayoutChrome();
     }
 
+    void BeginResize() { Moving = true; Native.ReleaseCapture(); Native.SendMessage(Handle, 0xA1, 17, 0); Snap(); Moving = false; }
     void EnableMove(Control c, Func<bool> active, bool immediate)
     {
         Point? press = null;
@@ -189,7 +191,10 @@ public sealed class Box : Form
     }
     static readonly (int Seconds, string Label)[] Intervals = [(10, "10 seconds"), (20, "20 seconds"), (60, "1 minute"), (300, "5 minutes")];
     readonly ToolStripMenuItem interval;
-    static readonly (BoxStyle Style, string Label)[] Looks = [(BoxStyle.Sticky, "Sticky note"), (BoxStyle.Pastel, "Pastel"), (BoxStyle.Dark, "Dark")];
+    internal static readonly (BoxStyle Style, string Label)[] Styles = [(BoxStyle.Sticky, "Sticky note"), (BoxStyle.Pastel, "Pastel"), (BoxStyle.Dark, "Dark")];
+    /// <summary>The box menu's choices: first "follow the default", then each style.</summary>
+    static readonly (BoxStyle? Style, string Label)[] Looks = [(null, "Default"), .. Styles.Select(s => ((BoxStyle?)s.Style, s.Label))];
+    BoxStyle Look => State.Look ?? owner.Settings.DefaultLook;
     readonly ToolStripMenuItem style;
     internal void SetInterval(int seconds) { State.SlideSeconds = seconds; reel?.SetInterval(seconds); owner.Save(); }
     internal void SetTitleHidden(bool hidden) { State.HideTitle = hidden; LayoutChrome(); owner.Save(); }
@@ -248,7 +253,7 @@ public sealed class Box : Form
     {
         reel?.Dispose(); reel = null;
         bool on = State.Photo != null || State.PhotoFolder != null;
-        photo.Visible = on; scroller.Visible = !on;
+        photo.Visible = on; scroller.Visible = grip.Visible = !on;
         if (State.PhotoFolder != null) { reel = new PhotoReel(photo, State.PhotoFolder, State.SlideSeconds); _ = reel.StartAsync(); }
         else { photo.Placeholder = "Photo unavailable — use Change photo…"; photo.Load(State.Photo); }
         if (on) items.ShowMarker(null);
@@ -317,11 +322,11 @@ public sealed class Box : Form
     }
     /// <summary>Fades the whole box, contents included; Windows can't make only a WinForms background see-through.</summary>
     internal void ApplyOpacity() => Opacity = Math.Clamp(State.Opacity ?? owner.Settings.BoxOpacity, Slider.Min, Slider.Max) / 100.0;
-    void Recolour()
+    internal void Recolour()
     {
         // Before 1.2.0 new boxes defaulted to SteelBlue, which isn't in the palette; give them Ocean so the swatch menu shows a choice.
         if (State.Colour == Color.SteelBlue.ToArgb()) State.Colour = SwatchRow.Palette[0].Colour.ToArgb();
-        var swatch = Color.FromArgb(255, Color.FromArgb(State.Colour)); var (body, strip) = Theme.Surface(swatch, State.Look);
+        var swatch = Color.FromArgb(255, Color.FromArgb(State.Colour)); var (body, strip) = Theme.Surface(swatch, Look);
         menuAccent = Theme.Mix(swatch, Color.White, .15f);
         accent = Theme.IsLight(body) ? Theme.Mix(swatch, Color.Black, .4f) : menuAccent;
         BackColor = body;

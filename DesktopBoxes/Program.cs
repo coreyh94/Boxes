@@ -14,9 +14,9 @@ public class State
     public int X { get; set; } = 48; public int Y { get; set; } = 48;
     public int Width { get; set; } = 384; public int Height { get; set; } = 288;
     public int Colour { get; set; } = SwatchRow.Palette[0].Colour.ToArgb();
-    /// <summary>Sticky, Pastel or Dark (see <see cref="BoxStyle"/>); unknown or missing means Sticky.</summary>
-    public string Style { get; set; } = nameof(BoxStyle.Sticky);
-    internal BoxStyle Look { get => Enum.TryParse<BoxStyle>(Style, out var s) ? s : BoxStyle.Sticky; set => Style = value.ToString(); }
+    /// <summary>Sticky, Pastel or Dark (see <see cref="BoxStyle"/>); null follows the default style in Settings.</summary>
+    public string? Style { get; set; }
+    internal BoxStyle? Look { get => Enum.TryParse<BoxStyle>(Style, out var s) ? s : null; set => Style = value?.ToString(); }
     /// <summary>Window opacity in percent (30–100); null follows the default in Settings.</summary>
     public int? Opacity { get; set; }
     public List<string> Items { get; set; } = [];
@@ -74,6 +74,14 @@ public sealed class Boxes : ApplicationContext
                         shot.Save(Path.Combine(shots, "box-opacity.png"));
                     }
                     test.State.Opacity = null; test.ApplyOpacity();
+                    if (!Theme.IsLight(test.BackColor)) throw new InvalidOperationException("Default style isn't Sticky note");
+                    Settings.DefaultLook = BoxStyle.Dark; test.Recolour();
+                    if (Theme.IsLight(test.BackColor)) throw new InvalidOperationException("Box didn't follow the default style");
+                    test.State.Look = BoxStyle.Pastel; test.State.Opacity = 70; test.Recolour();
+                    if (!Theme.IsLight(test.BackColor)) throw new InvalidOperationException("Box's own style ignored");
+                    ResetBoxesToDefaults();
+                    if (test.State.Style != null || test.State.Opacity != null || Theme.IsLight(test.BackColor) || test.Opacity != 1) throw new InvalidOperationException("Reset didn't restore the defaults");
+                    Settings.DefaultLook = BoxStyle.Sticky; test.Recolour();
                     var item = test.State.Items[0]; test.RenameItem(item, "Renamed site.url");
                     if (test.State.Items[0] != Path.Combine(Path.GetDirectoryName(item)!, "Renamed site.url") || !File.Exists(test.State.Items[0]) || File.Exists(item))
                         throw new InvalidOperationException("Item rename failed");
@@ -162,8 +170,9 @@ public sealed class Boxes : ApplicationContext
         tray.DoubleClick += (_, _) => Add();
         tray.BalloonTipClicked += (_, _) => InstallUpdate();
         updateTimer.Tick += async (_, _) => { updateTimer.Interval = 24 * 60 * 60 * 1000; await CheckForUpdateAsync(); }; updateTimer.Start();
-        if (File.Exists(file)) try { foreach (var s in JsonSerializer.Deserialize<List<State>>(File.ReadAllText(file)) ?? []) Add(s); } catch (JsonException) { File.Copy(file, file + ".invalid-" + DateTime.Now.Ticks); }
+        if (File.Exists(file)) try { foreach (var s in JsonSerializer.Deserialize<List<State>>(File.ReadAllText(file)) ?? []) { if (!Settings.StylesFollowDefault && s.Style == nameof(BoxStyle.Sticky)) s.Style = null; Add(s); } } catch (JsonException) { File.Copy(file, file + ".invalid-" + DateTime.Now.Ticks); }
         if (Windows.Count == 0) Add();
+        if (!Settings.StylesFollowDefault) { Settings.StylesFollowDefault = true; Settings.Save(); }
         FitToScreens(); ready = true; Save(); ProtectIcons();
         displaysSettled.Tick += (_, _) => { displaysSettled.Stop(); FitToScreens(); ProtectIcons(); };
         SystemEvents.DisplaySettingsChanged += DisplaysChanged;
@@ -213,6 +222,12 @@ public sealed class Boxes : ApplicationContext
         try { await Updates.InstallAsync(release); }
         catch (Exception e) when (e is HttpRequestException or IOException or TaskCanceledException or UnauthorizedAccessException or System.ComponentModel.Win32Exception) { Status("Update failed: " + e.Message); }
         finally { installing = false; }
+    }
+    /// <summary>Drops every box's own style and opacity so they all follow the defaults in Settings.</summary>
+    internal void ResetBoxesToDefaults()
+    {
+        foreach (var box in Windows) { box.State.Style = null; box.State.Opacity = null; box.Recolour(); box.ApplyOpacity(); }
+        Save();
     }
     internal ContextMenuStrip TrayMenu()
     {

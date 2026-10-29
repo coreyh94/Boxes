@@ -13,6 +13,11 @@ public sealed class AppSettings
     public bool CheckForUpdates { get; set; } = true;
     /// <summary>Opacity in percent for boxes that haven't been given their own.</summary>
     public int BoxOpacity { get; set; } = 100;
+    /// <summary>Style for boxes that haven't been given their own.</summary>
+    public string DefaultStyle { get; set; } = nameof(BoxStyle.Sticky);
+    internal BoxStyle DefaultLook { get => Enum.TryParse<BoxStyle>(DefaultStyle, out var s) ? s : BoxStyle.Sticky; set => DefaultStyle = value.ToString(); }
+    /// <summary>Set once 1.5.0's saved "Sticky" styles have been turned back into "follow the default".</summary>
+    public bool StylesFollowDefault { get; set; }
     /// <summary>Executable path whose tray icon has already been pinned once; later user choices are left alone.</summary>
     public string? TrayPinnedFor { get; set; }
     static string File => Path.Combine(Boxes.folder, "settings.json");
@@ -116,7 +121,7 @@ internal sealed class SettingsWindow : Form
     SettingsWindow(Boxes app)
     {
         Text = "Boxes settings"; Icon = AppIcon.Create(new Size(Theme.S(32), Theme.S(32))); FormBorderStyle = FormBorderStyle.FixedSingle; MaximizeBox = MinimizeBox = false;
-        StartPosition = FormStartPosition.CenterScreen; AutoScaleMode = AutoScaleMode.None; ClientSize = new Size(Theme.S(420), Theme.S(372));
+        StartPosition = FormStartPosition.CenterScreen; AutoScaleMode = AutoScaleMode.None; ClientSize = new Size(Theme.S(420), Theme.S(468));
         BackColor = Color.FromArgb(21, 25, 34); ForeColor = Theme.Ink; Font = Theme.Body; TopMost = true;
         var heading = new Label { Text = "Settings", Font = Theme.Title, ForeColor = Theme.Ink, Location = new Point(Theme.S(22), Theme.S(18)), AutoSize = true };
         var startup = Option("Start Boxes with Windows", "Opens quietly in the tray when you sign in.", Theme.S(62), Startup.Enabled);
@@ -129,8 +134,21 @@ internal sealed class SettingsWindow : Form
         var opacity = new SliderControl { Label = "Default box opacity", Value = app.Settings.BoxOpacity, Location = new Point(Theme.S(8), Theme.S(236)), Width = ClientSize.Width - Theme.S(16), Accent = Color.FromArgb(255, Color.FromArgb(0x739FF4)) };
         opacity.Changed += value => { app.Settings.BoxOpacity = value; foreach (var box in app.Windows) box.ApplyOpacity(); };
         opacity.Committed += _ => app.Settings.Save();
-        var opacityNote = new Label { Text = "For new boxes and any box whose own slider you haven't moved.", AutoSize = true, Location = new Point(Theme.S(24), Theme.S(292)), Font = Theme.Small, ForeColor = Theme.Muted };
-        Controls.AddRange([opacity, opacityNote]);
+        var styleLabel = new Label { Text = "Default box style", AutoSize = true, Location = new Point(Theme.S(24), Theme.S(296)), Font = Theme.Small, ForeColor = Theme.Muted };
+        var style = new ChoiceControl([.. Box.Styles.Select(s => s.Label)]) { Location = new Point(Theme.S(24), Theme.S(320)), Width = ClientSize.Width - Theme.S(48), Accent = Color.FromArgb(255, Color.FromArgb(0x739FF4)), Selected = Array.FindIndex(Box.Styles, s => s.Style == app.Settings.DefaultLook) };
+        style.Changed += i => { app.Settings.DefaultLook = Box.Styles[i].Style; app.Settings.Save(); foreach (var box in app.Windows) box.Recolour(); };
+        var note = new Label { Text = "Boxes use these unless you've set their own in the box's ⋯ menu.", AutoSize = true, Location = new Point(Theme.S(24), Theme.S(364)), Font = Theme.Small, ForeColor = Theme.Muted };
+        var reset = new SoftButton { Text = "Reset all boxes…", Size = new Size(Theme.S(150), Theme.S(32)), Location = new Point(Theme.S(22), ClientSize.Height - Theme.S(50)), Accent = Menus.Danger };
+        reset.Click += (_, _) =>
+        {
+            int custom = app.Windows.Count(b => b.State.Style != null || b.State.Opacity != null);
+            if (custom == 0) { MessageBox.Show(this, "Every box already uses the default style and opacity.", "Reset all boxes", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
+            var answer = MessageBox.Show(this,
+                $"{custom} box{(custom == 1 ? " has" : "es have")} its own style or opacity, set from the box's ⋯ menu. Resetting removes those, so every box uses the defaults here.\n\nColours, names and items aren't changed.",
+                "Reset all boxes to the defaults?", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            if (answer == DialogResult.OK) app.ResetBoxesToDefaults();
+        };
+        Controls.AddRange([opacity, styleLabel, style, note, reset]);
         var done = new SoftButton { Text = "Done", Size = new Size(Theme.S(92), Theme.S(32)), Location = new Point(ClientSize.Width - Theme.S(114), ClientSize.Height - Theme.S(50)), Accent = Color.FromArgb(255, Color.FromArgb(0x739FF4)) };
         done.Click += (_, _) => Close(); AcceptButton = CancelButton = done;
         Controls.AddRange([heading, done]);
