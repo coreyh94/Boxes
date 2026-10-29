@@ -67,6 +67,10 @@ public sealed class Box : Form
     readonly ScrollHost scroller;
     /// <summary>Shown instead of the items when this is a photo box.</summary>
     readonly PhotoPanel photo = new() { Dock = DockStyle.Fill, Visible = false };
+    /// <summary>Shown instead of the items when this is a note box: a plain text pad, saved as you type.</summary>
+    readonly TextBox note = new() { Multiline = true, AcceptsReturn = true, BorderStyle = BorderStyle.None, Dock = DockStyle.Fill, Font = new Font("Segoe UI", 14 * Theme.Scale, FontStyle.Regular, GraphicsUnit.Pixel), WordWrap = true };
+    readonly Panel notePanel = new() { Dock = DockStyle.Fill, Visible = false, Padding = new Padding(Theme.S(18), Theme.S(8), Theme.S(18), Theme.S(20)) };
+    readonly System.Windows.Forms.Timer noteSave = new() { Interval = 600 };
     readonly Panel header = new() { Dock = DockStyle.Top, Height = Theme.S(48), Cursor = Cursors.SizeAll };
     readonly TextBox title = new() { BorderStyle = BorderStyle.None, ForeColor = Theme.Ink, Font = Theme.Title };
     readonly GhostButton options = new() { Glyph = '', AccessibleName = "Box options" };
@@ -95,7 +99,8 @@ public sealed class Box : Form
         DoubleBuffered = true; Font = Theme.Body;
         Bounds = Home; // Boxes.FitToScreens relocates it if this spot is off the current monitors.
         scroller = new ScrollHost(items) { Dock = DockStyle.Fill };
-        Controls.Add(scroller); Controls.Add(photo); Controls.Add(header); Controls.Add(grip); Controls.Add(status);
+        notePanel.Controls.Add(note);
+        Controls.Add(scroller); Controls.Add(photo); Controls.Add(notePanel); Controls.Add(header); Controls.Add(grip); Controls.Add(status);
         grip.BringToFront(); status.BringToFront();
         header.Controls.AddRange([title, options]);
         title.Text = state.Name; title.AccessibleName = "Box title";
@@ -105,6 +110,11 @@ public sealed class Box : Form
         options.Click += (_, _) => menu.Show(options, new Point(options.Width - menu.Width, options.Height + Theme.S(6)));
         tips.SetToolTip(options, "Colours and box options");
         tips.SetToolTip(header, "Drag to move · boxes snap to the grid");
+        note.Text = State.Note ?? "";
+        // Kept in State straight away; written to disk once typing pauses (and on exit, like everything else).
+        note.TextChanged += (_, _) => { if (State.Note == null) return; State.Note = note.Text; noteSave.Stop(); noteSave.Start(); };
+        noteSave.Tick += (_, _) => { noteSave.Stop(); owner.Save(); };
+        Disposed += (_, _) => noteSave.Dispose();
         swatches.Picked += colour => { State.Colour = colour.ToArgb(); Recolour(); owner.Save(); };
         opacity.Changed += value => { State.Opacity = value; ApplyOpacity(); };
         opacity.Committed += _ => owner.Save();
@@ -125,13 +135,16 @@ public sealed class Box : Form
             Menus.Tick(style, Array.FindIndex(Looks, l => l.Style == State.Look));
             style.DropDownItems.OfType<ToolStripMenuItem>().First().Text = $"Default ({Styles.First(s => s.Style == owner.Settings.DefaultLook).Label})";
             titleBar.Text = State.HideTitle ? "Show title bar" : "Hide title bar"; rename.Visible = !State.HideTitle;
-            paste.Visible = State.Photo == null && State.PhotoFolder == null && CanPaste;
+            // A note's text takes every click, so without its title bar it couldn't be moved.
+            titleBar.Visible = State.Note == null || State.HideTitle;
+            paste.Visible = State.Photo == null && State.PhotoFolder == null && State.Note == null && CanPaste;
             titleBar.Image?.Dispose(); titleBar.Image = Menus.Glyph(State.HideTitle ? Menus.Icons.Show : Menus.Icons.Hide, Theme.Muted);
         };
         menu.Items.AddRange([
             Menus.Spacer(), swatches, opacity, style, Menus.Separator(),
             paste, changePhoto, nextPhoto, changeFolder, interval, titleBar,
             Menus.Item("New box", Menus.Icons.Add, () => owner.Add()),
+            Menus.Item("New note box", Menus.Icons.Note, () => owner.Add(note: true)),
             Menus.Item("New photo box…", Menus.Icons.Photo, () => _ = owner.AddPhotoBoxAsync()),
             Menus.Item("New slideshow box…", Menus.Icons.Slideshow, () => owner.AddSlideshowBox()),
             rename,
@@ -143,7 +156,7 @@ public sealed class Box : Form
                 if (owner.Busy) { SetMessage("Let your items finish saving first"); return; }
                 owner.Windows.Remove(this); owner.Save(); Close();
             }, danger: true), Menus.Spacer()]);
-        foreach (var c in new Control[] { this, header, scroller, items, grip, photo }) c.ContextMenuStrip = menu;
+        foreach (var c in new Control[] { this, header, scroller, items, grip, photo, notePanel }) c.ContextMenuStrip = menu;
         photo.MouseDoubleClick += (_, e) =>
         {
             if (e.Button != MouseButtons.Left || (reel?.Current ?? State.Photo) is not { } shown) return;
@@ -229,6 +242,7 @@ public sealed class Box : Form
     }
     void DragUpdate(DragEventArgs e)
     {
+        if (State.Note != null) { e.Effect = DragDropEffects.None; EndDragFeedback(); return; }
         bool tile = State.Photo == null && State.PhotoFolder == null && e.Data?.GetDataPresent(TileFormat) == true && tileDrag != null;
         // Photo boxes take a single photo (replacing theirs); slideshow boxes take a single folder.
         bool files = !tile && e.Data?.GetDataPresent(DataFormats.FileDrop) == true && (e.AllowedEffect & DragDropEffects.Copy) != 0
@@ -248,17 +262,20 @@ public sealed class Box : Form
     static string? DroppedPhoto(DragEventArgs e) => e.Data?.GetData(DataFormats.FileDrop) is string[] { Length: 1 } paths && Boxes.IsPhoto(paths[0]) ? paths[0] : null;
     static string? DroppedFolder(DragEventArgs e) => e.Data?.GetData(DataFormats.FileDrop) is string[] { Length: 1 } paths && Directory.Exists(paths[0]) ? paths[0] : null;
     PhotoReel? reel;
-    /// <summary>Switches between the item grid, a single photo, and a folder slideshow, from State.</summary>
+    /// <summary>Switches between the item grid, a note, a single photo, and a folder slideshow, from State.</summary>
     internal void ShowPhoto()
     {
         reel?.Dispose(); reel = null;
-        bool on = State.Photo != null || State.PhotoFolder != null;
-        photo.Visible = on; scroller.Visible = grip.Visible = !on;
+        bool on = State.Photo != null || State.PhotoFolder != null, isNote = State.Note != null && !on;
+        photo.Visible = on; notePanel.Visible = isNote; scroller.Visible = !on && !isNote; grip.Visible = !on; grip.BringToFront();
         if (State.PhotoFolder != null) { reel = new PhotoReel(photo, State.PhotoFolder, State.SlideSeconds); _ = reel.StartAsync(); }
         else { photo.Placeholder = "Photo unavailable — use Change photo…"; photo.Load(State.Photo); }
         if (on) items.ShowMarker(null);
     }
     internal PhotoReel? Reel => reel;
+    internal bool NoteShown => notePanel.Visible && !scroller.Visible;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal string NoteText { get => note.Text; set => note.Text = value; }
     void EndDragFeedback() { items.ShowMarker(null); if (!draggingOver) return; draggingOver = false; ApplyBorder(); Invalidate(); }
     /// <summary>Slot a drop at this screen point would take, reading tiles left-to-right, top-to-bottom.</summary>
     int InsertIndex(Point screen)
@@ -330,7 +347,8 @@ public sealed class Box : Form
         menuAccent = Theme.Mix(swatch, Color.White, .15f);
         accent = Theme.IsLight(body) ? Theme.Mix(swatch, Color.Black, .4f) : menuAccent;
         BackColor = body;
-        scroller.BackColor = items.BackColor = status.BackColor = grip.BackColor = photo.BackColor = body;
+        scroller.BackColor = items.BackColor = status.BackColor = grip.BackColor = photo.BackColor = notePanel.BackColor = note.BackColor = body;
+        note.ForeColor = Theme.InkOn(body);
         header.BackColor = title.BackColor = options.BackColor = strip;
         title.ForeColor = Theme.InkOn(strip); status.ForeColor = Theme.MutedOn(body); photo.Accent = accent; photo.Invalidate();
         items.Accent = options.Accent = grip.Accent = scroller.Accent = accent; opacity.Accent = menuAccent;

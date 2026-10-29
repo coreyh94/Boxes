@@ -14,6 +14,8 @@ public class State
     public int X { get; set; } = 48; public int Y { get; set; } = 48;
     public int Width { get; set; } = 384; public int Height { get; set; } = 288;
     public int Colour { get; set; } = SwatchRow.Palette[0].Colour.ToArgb();
+    /// <summary>Text of a note box; null for every other kind of box.</summary>
+    public string? Note { get; set; }
     /// <summary>Sticky, Pastel or Dark (see <see cref="BoxStyle"/>); null follows the default style in Settings.</summary>
     public string? Style { get; set; }
     internal BoxStyle? Look { get => Enum.TryParse<BoxStyle>(Style, out var s) ? s : null; set => Style = value?.ToString(); }
@@ -82,6 +84,12 @@ public sealed class Boxes : ApplicationContext
                     ResetBoxesToDefaults();
                     if (test.State.Style != null || test.State.Opacity != null || Theme.IsLight(test.BackColor) || test.Opacity != 1) throw new InvalidOperationException("Reset didn't restore the defaults");
                     Settings.DefaultLook = BoxStyle.Sticky; test.Recolour();
+                    var noteState = System.Text.Json.JsonSerializer.Deserialize<State>(System.Text.Json.JsonSerializer.Serialize(new State { Name = "Shopping", Note = "Milk\r\nBread", Colour = SwatchRow.Palette[4].Colour.ToArgb(), X = test.Right + 48, Y = test.Top }))!;
+                    var noteBox = new Box(this, noteState); Windows.Add(noteBox); noteBox.Show();
+                    if (noteBox.NoteText != "Milk\r\nBread" || !noteBox.NoteShown) throw new InvalidOperationException("Note box lost its text");
+                    noteBox.NoteText = "Milk\r\nBread\r\nEggs"; if (noteBox.State.Note != "Milk\r\nBread\r\nEggs") throw new InvalidOperationException("Note edits not kept");
+                    if (Environment.GetEnvironmentVariable("BOXES_PREVIEW_DIR") is { } notes) { using var bmp = new Bitmap(noteBox.Width, noteBox.Height); noteBox.DrawToBitmap(bmp, new Rectangle(Point.Empty, noteBox.Size)); bmp.Save(Path.Combine(notes, "box-note.png")); }
+                    Windows.Remove(noteBox); noteBox.Dispose();
                     var item = test.State.Items[0]; test.RenameItem(item, "Renamed site.url");
                     if (test.State.Items[0] != Path.Combine(Path.GetDirectoryName(item)!, "Renamed site.url") || !File.Exists(test.State.Items[0]) || File.Exists(item))
                         throw new InvalidOperationException("Item rename failed");
@@ -249,6 +257,7 @@ public sealed class Boxes : ApplicationContext
             Menus.Spacer(), new MenuHeader(() => { int items = Windows.Sum(b => b.State.Items.Count); return $"{Windows.Count} box{(Windows.Count == 1 ? "" : "es")} · {items} item{(items == 1 ? "" : "s")}"; }),
             Menus.Separator(),
             Menus.Item("New box", Menus.Icons.Add, () => Add()),
+            Menus.Item("New note box", Menus.Icons.Note, () => Add(note: true)),
             Menus.Item("New photo box…", Menus.Icons.Photo, () => _ = AddPhotoBoxAsync()),
             Menus.Item("New slideshow box…", Menus.Icons.Slideshow, () => AddSlideshowBox()), toggle,
             Menus.Item("Saved items", Menus.Icons.Folder, () => { Directory.CreateDirectory(Library.Root); Process.Start(new ProcessStartInfo(Library.Root) { UseShellExecute = true }); }),
@@ -257,7 +266,7 @@ public sealed class Boxes : ApplicationContext
             Menus.Item("Exit", Menus.Icons.Exit, RequestExit), Menus.Spacer()]);
         return menu;
     }
-    internal void Add(State? state = null)
+    internal void Add(State? state = null, bool note = false)
     {
         if (state == null)
         {
@@ -265,6 +274,7 @@ public sealed class Boxes : ApplicationContext
             var slot = Placement.FindBox(new Size(384, 288), Windows.Select(b => b.Bounds).ToArray(), screens);
             if (slot == null) { Status("No free space for a new box"); return; }
             state = new State { X = slot.Value.X, Y = slot.Value.Y };
+            if (note) { state.Name = "Note"; state.Note = ""; state.Colour = SwatchRow.Palette[4].Colour.ToArgb(); }
         }
         var b = new Box(this, state); Windows.Add(b);
         if (ready && !ClearIcons(Windows.Select(w => w.Bounds).ToArray())) { Windows.Remove(b); b.Dispose(); return; }
