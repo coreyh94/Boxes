@@ -40,7 +40,7 @@ jobs:
       - name: Test
         shell: pwsh
         run: |
-          foreach ($test in '--update-tests', '--library-tests', '--placement-tests') {
+          foreach ($test in '--update-tests', '--library-tests', '--placement-tests', '--note-tests') {
             $run = Start-Process release\Boxes-Portable.exe -ArgumentList $test -Wait -PassThru -NoNewWindow
             if ($run.ExitCode) { throw "$test failed (exit $($run.ExitCode))" }
             "$test passed"

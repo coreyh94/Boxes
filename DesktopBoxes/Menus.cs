@@ -82,7 +82,8 @@ internal static class Menus
     internal static class Icons
     {
         internal const char Update = '', Cut = '', Copy = '', Paste = '', Link = '', Info = '', Shield = '', OpenWith = '', Style = '', Note = '';
-        internal const char Timer = '', Check = '';
+        internal const char Undo = '', SelectAll = '', Bold = '', Italic = '', Underline = '', Strikethrough = '', Bullets = '';
+        internal const char Timer ='', Check = '';
         internal const char Add = '', Show = '', Hide = '', Folder = '', Settings = '', Exit = '';
         internal const char Rename = '', Delete = '', Open = '', Reveal = '', Remove = '', More = '', Photo = '', Slideshow = '', Next = '';
     }

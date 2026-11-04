@@ -67,8 +67,9 @@ public sealed class Box : Form
     readonly ScrollHost scroller;
     /// <summary>Shown instead of the items when this is a photo box.</summary>
     readonly PhotoPanel photo = new() { Dock = DockStyle.Fill, Visible = false };
-    /// <summary>Shown instead of the items when this is a note box: a plain text pad, saved as you type.</summary>
-    readonly TextBox note = new() { Multiline = true, AcceptsReturn = true, BorderStyle = BorderStyle.None, Dock = DockStyle.Fill, Font = new Font("Segoe UI", 14 * Theme.Scale, FontStyle.Regular, GraphicsUnit.Pixel), WordWrap = true };
+    /// <summary>Shown instead of the items when this is a note box: a text pad, saved as you type.</summary>
+    readonly NotePad note = new();
+    readonly ContextMenuStrip noteMenu = Menus.Create(Color.SteelBlue);
     readonly Panel notePanel = new() { Dock = DockStyle.Fill, Visible = false, Padding = new Padding(Theme.S(18), Theme.S(8), Theme.S(18), Theme.S(20)) };
     readonly System.Windows.Forms.Timer noteSave = new() { Interval = 600 };
     readonly Panel header = new() { Dock = DockStyle.Top, Height = Theme.S(48), Cursor = Cursors.SizeAll };
@@ -110,11 +111,13 @@ public sealed class Box : Form
         options.Click += (_, _) => menu.Show(options, new Point(options.Width - menu.Width, options.Height + Theme.S(6)));
         tips.SetToolTip(options, "Colours and box options");
         tips.SetToolTip(header, "Drag to move · boxes snap to the grid");
-        note.Text = State.Note ?? "";
-        // Kept in State straight away; written to disk once typing pauses (and on exit, like everything else).
-        note.TextChanged += (_, _) => { if (State.Note == null) return; State.Note = note.Text; noteSave.Stop(); noteSave.Start(); };
+        note.Load(State.Note, State.NoteRtf);
+        note.TextChanged += (_, _) => NoteEdited();
+        // Changing only the formatting (a shortcut, or undoing one) doesn't count as a text change.
+        note.KeyUp += (_, _) => NoteEdited();
         noteSave.Tick += (_, _) => { noteSave.Stop(); owner.Save(); };
-        Disposed += (_, _) => noteSave.Dispose();
+        Disposed += (_, _) => { noteSave.Dispose(); noteMenu.Dispose(); };
+        BuildNoteMenu();
         swatches.Picked += colour => { State.Colour = colour.ToArgb(); Recolour(); owner.Save(); };
         opacity.Changed += value => { State.Opacity = value; ApplyOpacity(); };
         opacity.Committed += _ => owner.Save();
@@ -177,6 +180,36 @@ public sealed class Box : Form
         items.MouseDown += (_, _) => { if (SelectedTile != null) Select(null); };
         Deactivate += (_, _) => { if (SelectedTile != null) Select(null); };
         Recolour(); ApplyOpacity(); RefreshItems(); ShowPhoto(); LayoutChrome();
+    }
+
+    /// <summary>Kept in State straight away; written to disk once typing pauses (and on exit, like everything else).</summary>
+    void NoteEdited()
+    {
+        if (State.Note == null) return;
+        var rtf = note.Rtf; if (rtf == State.NoteRtf) return;
+        State.Note = note.PlainText; State.NoteRtf = rtf; noteSave.Stop(); noteSave.Start();
+    }
+    /// <summary>RichTextBox has no right-click menu of its own, unlike the plain text box it replaced.</summary>
+    void BuildNoteMenu()
+    {
+        ToolStripMenuItem Row(string text, char glyph, string keys, Action action)
+        {
+            var item = Menus.Item(text, glyph, () => { action(); NoteEdited(); }); item.ShortcutKeyDisplayString = keys; return item;
+        }
+        var undo = Row("Undo", Menus.Icons.Undo, "Ctrl+Z", note.Undo);
+        var cut = Row("Cut", Menus.Icons.Cut, "Ctrl+X", note.Cut);
+        var copy = Row("Copy", Menus.Icons.Copy, "Ctrl+C", note.Copy);
+        var paste = Row("Paste", Menus.Icons.Paste, "Ctrl+V", note.PastePlain);
+        noteMenu.Opening += (_, _) => { undo.Enabled = note.CanUndo; cut.Enabled = copy.Enabled = note.SelectionLength > 0; paste.Enabled = note.CanPastePlain; };
+        noteMenu.Items.AddRange([
+            Menus.Spacer(), undo, Menus.Separator(), cut, copy, paste,
+            Row("Select all", Menus.Icons.SelectAll, "Ctrl+A", note.SelectAll), Menus.Separator(),
+            Row("Bold", Menus.Icons.Bold, "Ctrl+B", () => note.Toggle(NotePad.Bold)),
+            Row("Italic", Menus.Icons.Italic, "Ctrl+I", () => note.Toggle(NotePad.Italic)),
+            Row("Underline", Menus.Icons.Underline, "Ctrl+U", () => note.Toggle(NotePad.Underline)),
+            Row("Strikethrough", Menus.Icons.Strikethrough, "Ctrl+T", () => note.Toggle(NotePad.Strikethrough)),
+            Row("Dot points", Menus.Icons.Bullets, "Ctrl+Shift+L", note.ToggleBullets), Menus.Spacer()]);
+        note.ContextMenuStrip = noteMenu;
     }
 
     void BeginResize() { Moving = true; Native.ReleaseCapture(); Native.SendMessage(Handle, 0xA1, 17, 0); Snap(); Moving = false; }
@@ -275,7 +308,9 @@ public sealed class Box : Form
     internal PhotoReel? Reel => reel;
     internal bool NoteShown => notePanel.Visible && !scroller.Visible;
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
-    internal string NoteText { get => note.Text; set => note.Text = value; }
+    internal string NoteText { get => note.PlainText; set => note.Text = value; }
+    internal NotePad NotePad => note;
+    internal ContextMenuStrip NoteMenu => noteMenu;
     void EndDragFeedback() { items.ShowMarker(null); if (!draggingOver) return; draggingOver = false; ApplyBorder(); Invalidate(); }
     /// <summary>Slot a drop at this screen point would take, reading tiles left-to-right, top-to-bottom.</summary>
     int InsertIndex(Point screen)
@@ -353,7 +388,7 @@ public sealed class Box : Form
         title.ForeColor = Theme.InkOn(strip); status.ForeColor = Theme.MutedOn(body); photo.Accent = accent; photo.Invalidate();
         items.Accent = options.Accent = grip.Accent = scroller.Accent = accent; opacity.Accent = menuAccent;
         foreach (var tile in items.Controls.OfType<ItemTile>()) { tile.Accent = accent; if (tile.ContextMenuStrip != null) Menus.SetAccent(tile.ContextMenuStrip, menuAccent); }
-        Menus.SetAccent(menu, menuAccent); Menus.SetAccent((ContextMenuStrip)interval.DropDown, menuAccent); Menus.SetAccent((ContextMenuStrip)style.DropDown, menuAccent); ApplyBorder();
+        Menus.SetAccent(menu, menuAccent); Menus.SetAccent(noteMenu, menuAccent); Menus.SetAccent((ContextMenuStrip)interval.DropDown, menuAccent); Menus.SetAccent((ContextMenuStrip)style.DropDown, menuAccent); ApplyBorder();
         Invalidate(true);
     }
     internal void SetMessage(string? text) { message = text; UpdateStatus(); }
