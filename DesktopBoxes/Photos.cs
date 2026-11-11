@@ -17,6 +17,12 @@ internal sealed class PhotoPanel : Control
     internal Color Accent = Color.SteelBlue;
     internal string Placeholder = "Photo unavailable — use Change photo…";
     internal bool HasPhoto => photo != null;
+    /// <summary>Slideshow boxes show previous, pause/play and next buttons over the photo while the mouse is on it.</summary>
+    internal bool ShowControls;
+    internal bool Paused, CanGoBack;
+    /// <summary>Raised with the button pressed: 0 previous, 1 pause/play, 2 next.</summary>
+    internal event Action<int>? ControlPressed;
+    bool mouseInside; int hoverButton = -1;
     internal PhotoPanel()
     {
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
@@ -68,6 +74,63 @@ internal sealed class PhotoPanel : Control
     /// <summary>Gap above the photo; only needed when the box's title bar is hidden.</summary>
     internal int TopInset;
     Rectangle Frame => new(S(10), TopInset, Math.Max(1, Width - S(20)), Math.Max(1, Height - TopInset - S(10)));
+    const int ButtonSize = 34, ButtonGap = 2;
+    /// <summary>Draws the buttons without the mouse over the photo, for preview renders.</summary>
+    internal bool PreviewControls;
+    bool ControlsShown => ShowControls && HasPhoto && (mouseInside || PreviewControls);
+    /// <summary>The three round buttons, centred near the bottom of the photo. Empty when the box is too small for them.</summary>
+    Rectangle[] Buttons()
+    {
+        var frame = Frame; int size = S(ButtonSize), gap = S(ButtonGap), pad = S(4);
+        int width = size * 3 + gap * 2 + pad * 2, height = size + pad * 2;
+        if (frame.Width < width + S(16) || frame.Height < height + S(24)) return [];
+        int x = frame.X + (frame.Width - width) / 2 + pad, y = frame.Bottom - S(12) - height + pad;
+        return [.. Enumerable.Range(0, 3).Select(i => new Rectangle(x + i * (size + gap), y, size, size))];
+    }
+    int ButtonAt(Point p) => ControlsShown ? Array.FindIndex(Buttons(), b => b.Contains(p)) : -1;
+    void SetHover(int button) { if (button != hoverButton) { hoverButton = button; Invalidate(); } }
+    protected override void OnMouseEnter(EventArgs e) { mouseInside = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { mouseInside = false; hoverButton = -1; Invalidate(); base.OnMouseLeave(e); }
+    // Presses on a button stay here, so they never start a move, a resize, or a double-click to open the photo.
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        if (!mouseInside) { mouseInside = true; Invalidate(); }
+        int button = e.Button == MouseButtons.None ? ButtonAt(e.Location) : -1; SetHover(button);
+        if (button >= 0) Cursor = Cursors.Hand; else base.OnMouseMove(e);
+    }
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        int button = ButtonAt(e.Location);
+        if (button < 0) { base.OnMouseDown(e); return; }
+        if (e.Button == MouseButtons.Left && (button != 0 || CanGoBack)) ControlPressed?.Invoke(button);
+    }
+    protected override void OnMouseDoubleClick(MouseEventArgs e) { if (ButtonAt(e.Location) < 0) base.OnMouseDoubleClick(e); }
+    protected override void OnMouseUp(MouseEventArgs e) { if (ButtonAt(e.Location) < 0 || Capture) base.OnMouseUp(e); }
+    void PaintControls(Graphics g)
+    {
+        var buttons = Buttons(); int pad = S(4);
+        if (buttons.Length == 0) return;
+        var bar = Rectangle.FromLTRB(buttons[0].Left - pad, buttons[0].Top - pad, buttons[2].Right + pad, buttons[2].Bottom + pad);
+        using (var pill = Round(bar, bar.Height / 2f)) using (var fill = new SolidBrush(Color.FromArgb(150, 20, 20, 24))) g.FillPath(fill, pill);
+        char[] glyphs = [Menus.Icons.Previous, Paused ? Menus.Icons.Play : Menus.Icons.Pause, Menus.Icons.Next];
+        for (int i = 0; i < 3; i++)
+        {
+            bool enabled = i != 0 || CanGoBack;
+            if (i == hoverButton && enabled) { using var hover = new SolidBrush(Color.FromArgb(60, 255, 255, 255)); g.FillEllipse(hover, buttons[i]); }
+            using var glyph = Menus.Glyph(glyphs[i], Color.FromArgb(enabled ? 255 : 90, 255, 255, 255), S(16));
+            g.DrawImage(glyph, buttons[i].X + (buttons[i].Width - glyph.Width) / 2, buttons[i].Y + (buttons[i].Height - glyph.Height) / 2);
+        }
+    }
+    /// <summary>A small pause badge in the corner, so a paused slideshow doesn't look stuck.</summary>
+    void PaintPausedBadge(Graphics g)
+    {
+        var frame = Frame; int size = S(26);
+        if (frame.Width < size * 3 || frame.Height < size * 3) return;
+        var badge = new Rectangle(frame.Right - S(10) - size, frame.Y + S(10), size, size);
+        using (var fill = new SolidBrush(Color.FromArgb(150, 20, 20, 24))) g.FillEllipse(fill, badge);
+        using var glyph = Menus.Glyph(Menus.Icons.Pause, Color.White, S(12));
+        g.DrawImage(glyph, badge.X + (badge.Width - glyph.Width) / 2, badge.Y + (badge.Height - glyph.Height) / 2);
+    }
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics; g.Clear(BackColor); g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -95,6 +158,8 @@ internal sealed class PhotoPanel : Control
             using var attributes = new ImageAttributes(); attributes.SetColorMatrix(new ColorMatrix { Matrix33 = alpha });
             g.SetClip(path); g.DrawImage(fading, frame, 0, 0, fading.Width, fading.Height, GraphicsUnit.Pixel, attributes); g.ResetClip();
         }
+        if (ControlsShown) PaintControls(g);
+        else if (ShowControls && Paused) PaintPausedBadge(g);
     }
     protected override void Dispose(bool disposing) { if (disposing) { fadeTimer.Dispose(); photo?.Dispose(); cache?.Dispose(); fading?.Dispose(); } base.Dispose(disposing); }
 }
@@ -102,32 +167,78 @@ internal sealed class PhotoPanel : Control
 /// <summary>
 /// Drives a slideshow box: shuffles the photos in a folder (and its subfolders), shows the next one every few seconds,
 /// and rescans after each full pass so new photos appear. Decoding runs in the background; it pauses while hidden.
+/// Remembers the photos it has shown, so Previous steps back through them and Next then replays them in order.
 /// </summary>
 internal sealed class PhotoReel : IDisposable
 {
-    const int MaxPhotos = 5000;
+    const int MaxPhotos = 5000, MaxHistory = 200;
     readonly PhotoPanel panel; readonly string folder;
     readonly System.Windows.Forms.Timer timer;
     List<string> queue = [];
-    bool loading, disposed;
+    /// <summary>Photos shown so far, oldest first; <see cref="position"/> is the one on screen.</summary>
+    readonly List<string> history = [];
+    int position = -1;
+    bool loading, disposed, started;
     internal string? Current { get; private set; }
-    internal PhotoReel(PhotoPanel panel, string folder, int seconds)
+    internal bool Paused { get; private set; }
+    internal bool CanGoBack => position > 0;
+    internal bool TimerRunning => timer.Enabled;
+    internal PhotoReel(PhotoPanel panel, string folder, int seconds, bool paused = false)
     {
-        this.panel = panel; this.folder = folder;
+        this.panel = panel; this.folder = folder; Paused = paused;
         timer = new() { Interval = Math.Max(3, seconds) * 1000 };
         timer.Tick += async (_, _) => await NextAsync();
+        panel.ShowControls = true; panel.Paused = paused; panel.CanGoBack = false;
     }
     /// <summary>Changing the interval restarts the countdown, so the current photo gets the full new time.</summary>
     internal void SetInterval(int seconds) => timer.Interval = Math.Max(3, seconds) * 1000;
     internal int IntervalSeconds => timer.Interval / 1000;
-    internal async Task StartAsync() { panel.Placeholder = "Loading photos…"; panel.Invalidate(); await NextAsync(); if (!disposed) timer.Start(); }
-    /// <summary>Shows the next photo. Skips work while the box is hidden, unless nothing has been shown yet.</summary>
+    internal async Task StartAsync() { panel.Placeholder = "Loading photos…"; panel.Invalidate(); await NextAsync(); started = true; if (!disposed && !Paused) timer.Start(); }
+    /// <summary>Pausing keeps the current photo up; playing gives it a fresh full interval before moving on.</summary>
+    internal void SetPaused(bool paused)
+    {
+        Paused = paused; panel.Paused = paused; panel.Invalidate();
+        timer.Stop(); if (!paused && started && !disposed) timer.Start();
+    }
+    /// <summary>Goes back to the photo shown before this one, skipping any deleted since.</summary>
+    internal async Task PreviousAsync()
+    {
+        if (loading || disposed || !panel.Visible) return;
+        loading = true;
+        try
+        {
+            while (position > 0)
+            {
+                var image = await Task.Run(() => PhotoPanel.Read(history[position - 1]));
+                if (disposed) { image?.Dispose(); return; }
+                if (image == null) { history.RemoveAt(position - 1); position--; continue; }
+                position--; Show(history[position], image); return;
+            }
+            panel.CanGoBack = false; panel.Invalidate();
+        }
+        finally { loading = false; }
+    }
+    void Show(string path, Bitmap image)
+    {
+        Current = path; panel.CanGoBack = CanGoBack; panel.SetPhoto(image, fade: true);
+        // A photo picked by hand gets the full interval before the slideshow moves on.
+        if (timer.Enabled) { timer.Stop(); timer.Start(); }
+    }
+    /// <summary>Shows the next photo: forward through ones already seen after going back, otherwise a new one.
+    /// Skips work while the box is hidden, unless nothing has been shown yet.</summary>
     internal async Task NextAsync()
     {
         if (loading || disposed || (!panel.Visible && panel.HasPhoto)) return;
         loading = true;
         try
         {
+            while (position < history.Count - 1)
+            {
+                var image = await Task.Run(() => PhotoPanel.Read(history[position + 1]));
+                if (disposed) { image?.Dispose(); return; }
+                if (image == null) { history.RemoveAt(position + 1); continue; }
+                position++; Show(history[position], image); return;
+            }
             for (int attempts = 0; attempts < 2; attempts++)
             {
                 if (queue.Count == 0) queue = await Task.Run(() => Scan(folder, Current));
@@ -137,10 +248,12 @@ internal sealed class PhotoReel : IDisposable
                     var image = await Task.Run(() => PhotoPanel.Read(path));
                     if (disposed) { image?.Dispose(); return; }
                     if (image == null) continue; // unreadable or removed since the scan
-                    Current = path; panel.SetPhoto(image, fade: true); return;
+                    history.Add(path); position = history.Count - 1;
+                    if (history.Count > MaxHistory) { history.RemoveAt(0); position--; }
+                    Show(path, image); return;
                 }
             }
-            Current = null;
+            Current = null; history.Clear(); position = -1; panel.CanGoBack = false;
             panel.Placeholder = Directory.Exists(folder) ? "No photos in this folder yet" : "Folder unavailable — use Change folder…";
             panel.SetPhoto(null);
         }
@@ -158,5 +271,5 @@ internal sealed class PhotoReel : IDisposable
         if (photos.Count > 1 && photos[^1] == current) (photos[0], photos[^1]) = (photos[^1], photos[0]);
         return photos;
     }
-    public void Dispose() { disposed = true; timer.Dispose(); }
+    public void Dispose() { disposed = true; timer.Dispose(); panel.ShowControls = false; panel.Invalidate(); }
 }

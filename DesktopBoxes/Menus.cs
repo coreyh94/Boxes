@@ -86,6 +86,7 @@ internal static class Menus
         internal const char Timer ='', Check = '';
         internal const char Add = '', Show = '', Hide = '', Folder = '', Settings = '', Exit = '';
         internal const char Rename = '', Delete = '', Open = '', Reveal = '', Remove = '', More = '', Photo = '', Slideshow = '', Next = '';
+        internal const char Previous = '', Play = '', Pause = '';
     }
 }
 

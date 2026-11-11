@@ -29,6 +29,8 @@ public class State
     /// <summary>Folder a slideshow box cycles through (read live, not copied); null otherwise.</summary>
     public string? PhotoFolder { get; set; }
     public int SlideSeconds { get; set; } = 20;
+    /// <summary>A paused slideshow stays on its photo until played again, or stepped by hand.</summary>
+    public bool SlidePaused { get; set; }
     /// <summary>Hides the header (title and ⋯ button); the box then moves by dragging its body, and right-click opens the menu.</summary>
     public bool HideTitle { get; set; }
 }
@@ -138,6 +140,15 @@ public sealed class Boxes : ApplicationContext
                         if (reelBox.State.PhotoFolder != reelFolder || reelBox.Reel?.Current is not { } first || !reelBox.PhotoShown) throw new InvalidOperationException("Slideshow box did not show a photo from its folder");
                         await reelBox.Reel.NextAsync();
                         if (reelBox.Reel.Current == first || !Boxes.IsPhoto(reelBox.Reel.Current!)) throw new InvalidOperationException("Slideshow did not advance to another photo");
+                        var second = reelBox.Reel.Current;
+                        await reelBox.Reel.PreviousAsync();
+                        if (reelBox.Reel.Current != first || reelBox.Reel.CanGoBack) throw new InvalidOperationException("Previous photo did not go back to the first photo");
+                        await reelBox.Reel.NextAsync();
+                        if (reelBox.Reel.Current != second || !reelBox.Reel.CanGoBack) throw new InvalidOperationException("Next photo did not return to the photo after going back");
+                        reelBox.SetPaused(true);
+                        if (!reelBox.State.SlidePaused || reelBox.Reel.TimerRunning) throw new InvalidOperationException("Pausing the slideshow did not stop it");
+                        reelBox.SetPaused(false);
+                        if (reelBox.State.SlidePaused || !reelBox.Reel.TimerRunning) throw new InvalidOperationException("Playing the slideshow did not restart it");
                         if ((Directory.Exists(Library.Root) ? Directory.GetDirectories(Library.Root).Length : 0) != libraryEntries) throw new InvalidOperationException("Slideshow copied photos into the library");
                         reelBox.SetInterval(10);
                         if (reelBox.Reel.IntervalSeconds != 10 || reelBox.State.SlideSeconds != 10) throw new InvalidOperationException("Slideshow interval did not change");
@@ -151,6 +162,8 @@ public sealed class Boxes : ApplicationContext
                             while (Path.GetFileName(reelBox.Reel.Current) != "wallpaper.jpg") await reelBox.Reel.NextAsync();
                             await Task.Delay(700); reelBox.State.Name = "Holidays"; reelBox.RenderPhotoPreview(Path.Combine(reelPreview, "box-slideshow.png"));
                             await reelBox.Reel.NextAsync(); await Task.Delay(250); reelBox.RenderPhotoPreview(Path.Combine(reelPreview, "box-slideshow-fade.png"));
+                            await Task.Delay(700); reelBox.RenderControlsPreview(Path.Combine(reelPreview, "box-slideshow-controls.png"));
+                            reelBox.SetPaused(true); reelBox.RenderPhotoPreview(Path.Combine(reelPreview, "box-slideshow-paused.png")); reelBox.SetPaused(false);
                         }
                     }
                     finally { Directory.Delete(reelFolder, true); }

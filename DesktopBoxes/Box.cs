@@ -123,6 +123,9 @@ public sealed class Box : Form
         opacity.Committed += _ => owner.Save();
         var changePhoto = Menus.Item("Change photo…", Menus.Icons.Photo, () => _ = owner.ChangePhotoAsync(this));
         var nextPhoto = Menus.Item("Next photo", Menus.Icons.Next, () => _ = reel?.NextAsync());
+        var previousPhoto = Menus.Item("Previous photo", Menus.Icons.Previous, () => _ = reel?.PreviousAsync());
+        var pausePlay = Menus.Item("Pause slideshow", Menus.Icons.Pause, () => SetPaused(!State.SlidePaused));
+        photo.ControlPressed += button => { if (button == 0) _ = reel?.PreviousAsync(); else if (button == 1) SetPaused(!State.SlidePaused); else _ = reel?.NextAsync(); };
         var changeFolder = Menus.Item("Change folder…", Menus.Icons.Folder, () => owner.ChangeFolder(this));
         style = Menus.Submenu("Style", Menus.Icons.Style, [.. Looks.Select(l => (l.Label, (Action)(() => { State.Look = l.Style; Recolour(); owner.Save(); })))]);
         interval = Menus.Submenu("Change photo every", Menus.Icons.Timer, [.. Intervals.Select(i => (i.Label, (Action)(() => SetInterval(i.Seconds))))]);
@@ -133,7 +136,11 @@ public sealed class Box : Form
         menu.Opening += (_, _) =>
         {
             swatches.Current = Color.FromArgb(255, Color.FromArgb(State.Colour)); opacity.Value = State.Opacity ?? owner.Settings.BoxOpacity;
-            changePhoto.Visible = State.Photo != null; nextPhoto.Visible = changeFolder.Visible = interval.Visible = State.PhotoFolder != null;
+            changePhoto.Visible = State.Photo != null;
+            previousPhoto.Visible = pausePlay.Visible = nextPhoto.Visible = changeFolder.Visible = interval.Visible = State.PhotoFolder != null;
+            previousPhoto.Enabled = reel?.CanGoBack == true;
+            pausePlay.Text = State.SlidePaused ? "Play slideshow" : "Pause slideshow";
+            pausePlay.Image?.Dispose(); pausePlay.Image = Menus.Glyph(State.SlidePaused ? Menus.Icons.Play : Menus.Icons.Pause, Theme.Muted);
             Menus.Tick(interval, Array.FindIndex(Intervals, i => i.Seconds == State.SlideSeconds));
             Menus.Tick(style, Array.FindIndex(Looks, l => l.Style == State.Look));
             style.DropDownItems.OfType<ToolStripMenuItem>().First().Text = $"Default ({Styles.First(s => s.Style == owner.Settings.DefaultLook).Label})";
@@ -145,7 +152,7 @@ public sealed class Box : Form
         };
         menu.Items.AddRange([
             Menus.Spacer(), swatches, opacity, style, Menus.Separator(),
-            paste, changePhoto, nextPhoto, changeFolder, interval, titleBar,
+            paste, changePhoto, previousPhoto, pausePlay, nextPhoto, changeFolder, interval, titleBar,
             Menus.Item("New box", Menus.Icons.Add, () => owner.Add()),
             Menus.Item("New note box", Menus.Icons.Note, () => owner.Add(note: true)),
             Menus.Item("New photo box…", Menus.Icons.Photo, () => _ = owner.AddPhotoBoxAsync()),
@@ -243,6 +250,7 @@ public sealed class Box : Form
     BoxStyle Look => State.Look ?? owner.Settings.DefaultLook;
     readonly ToolStripMenuItem style;
     internal void SetInterval(int seconds) { State.SlideSeconds = seconds; reel?.SetInterval(seconds); owner.Save(); }
+    internal void SetPaused(bool paused) { State.SlidePaused = paused; reel?.SetPaused(paused); owner.Save(); }
     internal void SetTitleHidden(bool hidden) { State.HideTitle = hidden; LayoutChrome(); owner.Save(); }
     internal bool TitleShown => header.Visible;
     /// <summary>Renders the box menu with its interval submenu open, highlighting the parent item.</summary>
@@ -291,6 +299,7 @@ public sealed class Box : Form
         else if (local.Y > scroller.ClientSize.Height - edge) scroller.ScrollTo(scroller.Offset + Theme.S(14));
     }
     internal void RenderPhotoPreview(string file) { title.Text = State.Name; PerformLayout(); using var bmp = new Bitmap(Width, Height); DrawToBitmap(bmp, ClientRectangle); bmp.Save(file); }
+    internal void RenderControlsPreview(string file) { photo.PreviewControls = true; RenderPhotoPreview(file); photo.PreviewControls = false; }
     internal bool PhotoShown => photo.Visible && photo.HasPhoto && !scroller.Visible;
     static string? DroppedPhoto(DragEventArgs e) => e.Data?.GetData(DataFormats.FileDrop) is string[] { Length: 1 } paths && Boxes.IsPhoto(paths[0]) ? paths[0] : null;
     static string? DroppedFolder(DragEventArgs e) => e.Data?.GetData(DataFormats.FileDrop) is string[] { Length: 1 } paths && Directory.Exists(paths[0]) ? paths[0] : null;
@@ -301,7 +310,7 @@ public sealed class Box : Form
         reel?.Dispose(); reel = null;
         bool on = State.Photo != null || State.PhotoFolder != null, isNote = State.Note != null && !on;
         photo.Visible = on; notePanel.Visible = isNote; scroller.Visible = !on && !isNote; grip.Visible = !on; grip.BringToFront();
-        if (State.PhotoFolder != null) { reel = new PhotoReel(photo, State.PhotoFolder, State.SlideSeconds); _ = reel.StartAsync(); }
+        if (State.PhotoFolder != null) { reel = new PhotoReel(photo, State.PhotoFolder, State.SlideSeconds, State.SlidePaused); _ = reel.StartAsync(); }
         else { photo.Placeholder = "Photo unavailable — use Change photo…"; photo.Load(State.Photo); }
         if (on) items.ShowMarker(null);
     }
